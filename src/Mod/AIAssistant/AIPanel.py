@@ -461,6 +461,12 @@ class AIAssistantDockWidget(QtWidgets.QDockWidget):
         if self.worker and self.worker.isRunning():
             return
 
+        # Require document to be saved first
+        doc = FreeCAD.ActiveDocument
+        if not doc or not doc.FileName:
+            self._prompt_save_document()
+            return
+
         self.pending_input = user_input
 
         # Log message sent
@@ -1329,6 +1335,40 @@ Return ONLY the Python code in a ```python code block."""
                 )
             # Ensure CLAUDE.md exists in new project
             self._ensure_claude_md()
+
+    def _prompt_save_document(self):
+        """Prompt user to save the document before using AI Assistant.
+
+        The AI Assistant requires a saved document to create a project directory
+        for source.py (code history) and session data.
+        """
+        msg_box = QtWidgets.QMessageBox(self)
+        msg_box.setWindowTitle("Save Document Required")
+        msg_box.setText("Please save your document first.")
+        msg_box.setInformativeText(
+            "The AI Assistant needs a saved document to store:\n"
+            "• source.py - Your design's code history\n"
+            "• Sessions and snapshots\n\n"
+            "Would you like to save now?"
+        )
+        msg_box.setIcon(QtWidgets.QMessageBox.Information)
+        msg_box.setStandardButtons(
+            QtWidgets.QMessageBox.Save | QtWidgets.QMessageBox.Cancel
+        )
+        msg_box.setDefaultButton(QtWidgets.QMessageBox.Save)
+
+        result = msg_box.exec()
+
+        if result == QtWidgets.QMessageBox.Save:
+            # Trigger FreeCAD's Save As dialog
+            try:
+                FreeCADGui.runCommand("Std_SaveAs", 0)
+                # After save, update project directory
+                self._update_project_dir()
+                self._ensure_source_file()
+                self._ensure_claude_md()
+            except Exception as e:
+                FreeCAD.Console.PrintError(f"AIAssistant: Save failed: {e}\n")
 
     def _ensure_claude_md(self):
         """Ensure CLAUDE.md exists in project directory for Claude Code backend.
