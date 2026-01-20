@@ -17,11 +17,13 @@ from typing import Optional, List, Dict
 import FreeCAD
 
 
-# System prompt template - {repo_root} and {source_path} are filled at runtime
+# System prompt template - filled at runtime with workbench-specific info
 FREECAD_SYSTEM_PROMPT_TEMPLATE = """You are a FreeCAD AI assistant.
 Edit source.py directly to make design changes.
 
 source.py location: {source_path}
+Current workbench: {workbench}
+FreeCAD repo root: {repo_root}
 
 WORKFLOW:
 1. Read source.py to understand current design
@@ -30,17 +32,17 @@ WORKFLOW:
 4. DELETE objects: Remove the relevant code from source.py
 5. MODIFY objects: Edit the relevant code in source.py
 
-The source.py file is a Python script that generates FreeCAD geometry when executed.
-It is the single source of truth for the design.
+## IMPORTANT: Use the correct API for the current workbench
 
-## FreeCAD API Reference
+**You MUST use APIs appropriate for "{workbench}".**
 
-The FreeCAD API reference is included in the context (FREECAD_API.md). Use the correct method
-signatures from the reference - don't guess. Key patterns:
-- shape.makeFillet(radius, edgeList) returns NEW shape, doesn't modify in place
-- shape.makeChamfer(size, edgeList) returns NEW shape
-- Part.makeBox(), Part.makeCylinder() create primitive shapes
-- doc.addObject("Part::Feature", "Name") for computed shapes
+{api_reference}
+
+## How to Learn the API
+If you need to understand a FreeCAD API function, read the actual source files:
+- Use Glob to find relevant files: `src/Mod/<Workbench>/`
+- Use Read to examine function signatures and docstrings
+- The source code is the authoritative reference
 
 ## Code Rules
 - Use millimeters for all dimensions
@@ -49,6 +51,46 @@ signatures from the reference - don't guess. Key patterns:
 - Use object Names (not Labels) when referencing in code
 
 To ANSWER questions (not modify design): Return clear text explanation."""
+
+
+# Workbench API references - point to actual source files
+WORKBENCH_API_REFS = {
+    "Draft": """For 2D drafting, use the Draft module:
+- API source: {repo_root}/src/Mod/Draft/draftmake/ (make_line.py, make_circle.py, etc.)
+- Import: `import Draft`
+- Key functions: Draft.make_line(), Draft.make_wire(), Draft.make_circle(), Draft.make_rectangle(), Draft.make_polygon(), Draft.make_text()
+- All Z coordinates should be 0 for 2D drawings""",
+
+    "Part": """For 3D solid modeling, use the Part module:
+- API source: {repo_root}/src/Mod/Part/App/
+- Import: `import Part`
+- Key functions: Part.makeBox(), Part.makeCylinder(), Part.makeSphere(), shape.fuse(), shape.cut()
+- Reference: {repo_root}/src/Mod/AIAssistant/FREECAD_API.md""",
+
+    "PartDesign": """For parametric feature-based modeling, use PartDesign:
+- API source: {repo_root}/src/Mod/PartDesign/
+- Work inside a Body: doc.addObject("PartDesign::Body", "Body")
+- Create sketches, then Pad/Pocket/Revolve them""",
+
+    "Sketcher": """For constraint-based 2D sketching:
+- API source: {repo_root}/src/Mod/Sketcher/
+- Import: `import Sketcher`
+- Create fully constrained sketches for PartDesign""",
+
+    "BIM": """For architectural elements:
+- API source: {repo_root}/src/Mod/BIM/
+- Import: `import Arch`
+- Key functions: Arch.makeWall(), Arch.makeStructure(), Arch.makeWindow()""",
+
+    "Arch": """For architectural elements:
+- API source: {repo_root}/src/Mod/Arch/
+- Import: `import Arch`
+- Key functions: Arch.makeWall(), Arch.makeStructure(), Arch.makeWindow()""",
+
+    "TechDraw": """For technical drawings:
+- API source: {repo_root}/src/Mod/TechDraw/
+- Create pages and add views of 3D objects""",
+}
 
 
 class ClaudeCodeBackend:
@@ -125,16 +167,27 @@ class ClaudeCodeBackend:
         # Allow Edit tool for direct source.py modification
         cmd.extend(["--allowedTools", "Read,Glob,Grep,Edit"])
 
-        # Build system prompt with actual paths
-        if not self._has_claude_md():
-            source_path = self._get_source_path()
-            system_prompt = FREECAD_SYSTEM_PROMPT_TEMPLATE.format(
-                source_path=source_path or "(no project)"
-            )
-            cmd.extend(["--append-system-prompt", system_prompt])
-            self.last_system_prompt = system_prompt
-        else:
-            self.last_system_prompt = "(Using project CLAUDE.md)"
+        # Build system prompt with workbench-specific info
+        # ALWAYS include workbench context, even if project has CLAUDE.md
+        source_path = self._get_source_path()
+        workbench = self._get_active_workbench()
+        repo_root = self._repo_root or ""
+
+        # Get workbench-specific API reference
+        api_ref = WORKBENCH_API_REFS.get(workbench, "")
+        if api_ref:
+            api_ref = api_ref.format(repo_root=repo_root)
+
+        system_prompt = FREECAD_SYSTEM_PROMPT_TEMPLATE.format(
+            source_path=source_path or "(no project)",
+            workbench=workbench,
+            repo_root=repo_root,
+            api_reference=api_ref
+        )
+        cmd.extend(["--append-system-prompt", system_prompt])
+        self.last_system_prompt = system_prompt
+
+        FreeCAD.Console.PrintMessage(f"AIAssistant: Using workbench: {workbench}\n")
 
         # Resume session if we have one (for multi-turn conversations)
         if self._session_id:
@@ -438,6 +491,25 @@ class ClaudeCodeBackend:
                 return str(current)
             current = current.parent
         return None
+
+    def _get_active_workbench(self) -> str:
+        """Get the name of the currently active workbench.
+
+        Returns:
+            Workbench name (e.g., "Draft", "Part", "PartDesign") or "Part" as default
+        """
+        try:
+            import FreeCADGui
+            wb = FreeCADGui.activeWorkbench()
+            if wb:
+                # Get workbench name and clean it up
+                wb_name = wb.name() if hasattr(wb, 'name') else str(type(wb).__name__)
+                # Remove "Workbench" suffix if present
+                wb_name = wb_name.replace("Workbench", "").strip()
+                return wb_name
+        except Exception:
+            pass
+        return "Part"  # Default to Part workbench
 
     def clear_session(self):
         """Clear the current session (start fresh conversation)."""

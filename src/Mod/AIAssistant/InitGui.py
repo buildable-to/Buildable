@@ -5,6 +5,7 @@
 FreeCAD.Console.PrintMessage(">>> AIAssistant InitGui loading\n")
 
 _panel = None
+_observer = None
 
 
 def show_panel():
@@ -96,5 +97,44 @@ def _setup_menu():
 
 from PySide6 import QtCore
 QtCore.QTimer.singleShot(3000, _setup_menu)
+
+
+def _setup_document_observer():
+    """Register the document observer to auto-open AI Assistant."""
+    global _observer
+
+    def _show_panel_safe():
+        """Show panel using module import to avoid scope issues."""
+        try:
+            import AIAssistant
+            AIAssistant.show()
+        except Exception as e:
+            FreeCAD.Console.PrintWarning(f"AIAssistant: Failed to show panel: {e}\n")
+
+    class _DocumentObserver:
+        """Document observer that auto-opens AI Assistant when a document is created/opened."""
+
+        def slotCreatedDocument(self, doc):
+            """Called when a new document is created."""
+            FreeCAD.Console.PrintMessage(f">>> AIAssistant: Document created: {doc.Name}\n")
+            from PySide6 import QtCore
+            QtCore.QTimer.singleShot(100, _show_panel_safe)
+
+        def slotOpenedDocument(self, doc):
+            """Called when an existing document is opened."""
+            FreeCAD.Console.PrintMessage(f">>> AIAssistant: Document opened: {doc.Name}\n")
+            from PySide6 import QtCore
+            QtCore.QTimer.singleShot(100, _show_panel_safe)
+
+    try:
+        _observer = _DocumentObserver()
+        FreeCAD.addDocumentObserver(_observer)
+        FreeCAD.Console.PrintMessage(">>> AIAssistant document observer registered\n")
+    except Exception as e:
+        FreeCAD.Console.PrintWarning(f"AIAssistant observer error: {e}\n")
+
+
+# Register observer after a short delay to ensure FreeCAD is fully initialized
+QtCore.QTimer.singleShot(1000, _setup_document_observer)
 
 FreeCAD.Console.PrintMessage(">>> AIAssistant InitGui loaded\n")
