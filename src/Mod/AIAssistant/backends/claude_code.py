@@ -164,8 +164,8 @@ class ClaudeCodeBackend:
         # Note: stream-json requires --verbose when used with -p (print mode)
         cmd = ["claude", "-p", "--verbose", "--output-format", "stream-json"]
 
-        # Allow Edit tool for direct source.py modification
-        cmd.extend(["--allowedTools", "Read,Glob,Grep,Edit"])
+        # Allow Edit and Write tools for direct source.py modification
+        cmd.extend(["--allowedTools", "Read,Glob,Grep,Edit,Write"])
 
         # Build system prompt with workbench-specific info
         # ALWAYS include workbench context, even if project has CLAUDE.md
@@ -288,12 +288,13 @@ class ClaudeCodeBackend:
 
             # Track if source.py was edited (for direct source editing flow)
             for tc in tool_calls:
-                if tc.get("tool") == "Edit":
+                tool_name = tc.get("tool")
+                if tool_name in ("Edit", "Write"):
                     file_path = tc.get("input", {}).get("file_path", "")
                     if "source.py" in file_path:
                         self.source_was_edited = True
                         FreeCAD.Console.PrintMessage(
-                            "AIAssistant: Detected source.py edit\n"
+                            f"AIAssistant: Detected source.py {tool_name.lower()}\n"
                         )
                         break
 
@@ -447,6 +448,11 @@ class ClaudeCodeBackend:
             if len(path) > 50:
                 path = "..." + path[-47:]
             return f"Edit: {path}"
+        elif tool == "Write":
+            path = input_data.get("file_path", "")
+            if len(path) > 50:
+                path = "..." + path[-47:]
+            return f"Write: {path}"
         elif tool == "Bash":
             cmd = input_data.get("command", "")
             if len(cmd) > 50:
