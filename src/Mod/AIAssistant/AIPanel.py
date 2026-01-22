@@ -446,9 +446,16 @@ class AIAssistantDockWidget(QtWidgets.QDockWidget):
         FreeCAD.Console.PrintMessage(f"AIAssistant: Session label visible={self._session_label.isVisible()}\n")
 
     def _open_sessions_folder(self):
-        """Open the sessions folder in file manager."""
+        """Open the sessions folder in file manager (cross-platform)."""
+        import sys
+        folder_path = str(self.session_manager._sessions_dir)
         try:
-            subprocess.run(["xdg-open", str(self.session_manager._sessions_dir)])
+            if sys.platform == "win32":
+                os.startfile(folder_path)
+            elif sys.platform == "darwin":
+                subprocess.run(["open", folder_path])
+            else:
+                subprocess.run(["xdg-open", folder_path])
         except Exception as e:
             FreeCAD.Console.PrintError(f"Failed to open sessions folder: {e}\n")
 
