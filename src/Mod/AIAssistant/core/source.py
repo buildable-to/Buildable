@@ -250,7 +250,7 @@ def _write_code_block(source_path: Path, code: str, description: str, timestamp:
     # Create file with header if new
     if not source_path.exists():
         doc_name = FreeCAD.ActiveDocument.Name if FreeCAD.ActiveDocument else "Design"
-        with open(source_path, "w") as f:
+        with open(source_path, "w", encoding="utf-8") as f:
             f.write(f"# FreeCAD AI Source - {doc_name}\n")
             f.write(f"# Created: {timestamp}\n")
             f.write("#\n")
@@ -262,7 +262,7 @@ def _write_code_block(source_path: Path, code: str, description: str, timestamp:
             f.write('doc = FreeCAD.ActiveDocument or FreeCAD.newDocument("Design")\n\n')
 
     # Append code block
-    with open(source_path, "a") as f:
+    with open(source_path, "a", encoding="utf-8") as f:
         f.write(f"\n# === {timestamp} ===\n")
         if description:
             # Add description as comments (limit to 3 lines)
@@ -285,7 +285,7 @@ def read_source() -> str:
     source_path = get_source_path()
     if source_path and source_path.exists():
         try:
-            with open(source_path, "r") as f:
+            with open(source_path, "r", encoding="utf-8") as f:
                 parts.append(f.read())
         except Exception:
             pass
@@ -406,7 +406,7 @@ def init_source_file(source_path: Path = None, doc_name: str = None) -> bool:
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     try:
-        with open(source_path, "w") as f:
+        with open(source_path, "w", encoding="utf-8") as f:
             f.write(f"# FreeCAD AI Source - {doc_name}\n")
             f.write(f"# Created: {timestamp}\n")
             f.write("#\n")

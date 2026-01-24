@@ -10,11 +10,34 @@ Official documentation: https://code.claude.com/docs/en/headless
 
 import json
 import os
+import shutil
 import subprocess
+import sys
 import time
 from pathlib import Path
 from typing import Optional, List, Dict
 import FreeCAD
+
+
+def _get_claude_command() -> str:
+    """Get the correct claude command for the current platform.
+
+    On Windows with npm install, the command is 'claude.cmd'.
+    On Linux/macOS or Windows native install, it's 'claude'.
+    """
+    if sys.platform == "win32":
+        # Try to find claude in PATH
+        claude_path = shutil.which("claude")
+        if claude_path:
+            return claude_path
+        # Try claude.cmd (npm global install on Windows)
+        claude_cmd = shutil.which("claude.cmd")
+        if claude_cmd:
+            return claude_cmd
+        # Fallback - let subprocess handle it
+        return "claude"
+    else:
+        return "claude"
 
 
 # System prompt template - filled at runtime with workbench-specific info
@@ -162,7 +185,8 @@ class ClaudeCodeBackend:
 
         # Build command - use stream-json for tool visibility
         # Note: stream-json requires --verbose when used with -p (print mode)
-        cmd = ["claude", "-p", "--verbose", "--output-format", "stream-json"]
+        claude_cmd = _get_claude_command()
+        cmd = [claude_cmd, "-p", "--verbose", "--output-format", "stream-json"]
 
         # Allow Edit and Write tools for direct source.py modification
         cmd.extend(["--allowedTools", "Read,Glob,Grep,Edit,Write"])
@@ -215,6 +239,7 @@ class ClaudeCodeBackend:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
+                encoding="utf-8",  # Explicit UTF-8 for Windows compatibility
                 cwd=cwd
             )
 
