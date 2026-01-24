@@ -1446,8 +1446,9 @@ Return ONLY the Python code in a ```python code block."""
             view.viewIsometric()
             view.fitAll()
 
-            # Save to temp file
-            tmp_path = tempfile.mktemp(suffix=".png")
+            # Save to temp file (use NamedTemporaryFile for security)
+            with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp_file:
+                tmp_path = tmp_file.name
             try:
                 view.saveImage(tmp_path, 800, 600)
 
