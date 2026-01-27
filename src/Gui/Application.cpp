@@ -2553,6 +2553,15 @@ void Application::runApplication()
     // A new QApplication
     Base::Console().log("Init: Creating Gui::Application and QApplication\n");
 
+    // Set desktop file name before QApplication construction so X11 WM_CLASS is correct
+    {
+        const auto& cfg = App::Application::Config();
+        auto dfIt = cfg.find("DesktopFileName");
+        if (dfIt != cfg.end()) {
+            QGuiApplication::setDesktopFileName(QString::fromUtf8(dfIt->second.c_str()));
+        }
+    }
+
     int argc = App::Application::GetARGC();
     GUISingleApplication mainApp(argc, App::Application::GetARGV());
 
