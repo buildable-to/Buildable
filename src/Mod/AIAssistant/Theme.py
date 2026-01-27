@@ -1,42 +1,44 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 """
 Theme - Centralized design tokens for the AI Assistant UI.
-Modern, Cursor-inspired dark theme with blue accents.
+Supports dark and light themes, following the system FreeCAD theme.
 """
 
+import FreeCAD
+
 # =============================================================================
-# COLOR PALETTE
+# COLOR PALETTES
 # =============================================================================
 
-COLORS = {
+_COLORS_DARK = {
     # Background colors (ultra-dark, refined)
-    "bg_primary": "#09090b",      # Main background
-    "bg_secondary": "#0f0f11",    # Cards, panels
-    "bg_tertiary": "#18181b",     # Elevated surfaces
-    "bg_input": "#0c0c0e",        # Input field background
-    "bg_hover": "#1f1f23",        # Hover state
+    "bg_primary": "#09090b",
+    "bg_secondary": "#0f0f11",
+    "bg_tertiary": "#18181b",
+    "bg_input": "#0c0c0e",
+    "bg_hover": "#1f1f23",
 
     # Border colors
-    "border_subtle": "#1c1c1f",   # Very subtle borders
-    "border_default": "#27272a",  # Standard borders
-    "border_focus": "#3b82f6",    # Focus state (blue)
-    "border_hover": "#3f3f46",    # Hover state
+    "border_subtle": "#1c1c1f",
+    "border_default": "#27272a",
+    "border_focus": "#3b82f6",
+    "border_hover": "#3f3f46",
 
     # Text colors
-    "text_primary": "#fafafa",    # Primary text (nearly white)
-    "text_secondary": "#a1a1aa",  # Secondary text
-    "text_muted": "#52525b",      # Muted/disabled text
-    "text_placeholder": "#71717a", # Placeholder text
+    "text_primary": "#fafafa",
+    "text_secondary": "#a1a1aa",
+    "text_muted": "#52525b",
+    "text_placeholder": "#71717a",
 
     # Accent colors
-    "accent_primary": "#3b82f6",  # Primary accent (blue)
-    "accent_primary_hover": "#2563eb",  # Blue hover
-    "accent_success": "#22c55e",  # Success/created (green)
+    "accent_primary": "#3b82f6",
+    "accent_primary_hover": "#2563eb",
+    "accent_success": "#22c55e",
     "accent_success_hover": "#16a34a",
-    "accent_error": "#ef4444",    # Error (red)
+    "accent_error": "#ef4444",
     "accent_error_hover": "#dc2626",
-    "accent_warning": "#f59e0b",  # Warning (amber)
-    "accent_info": "#3b82f6",     # Info (blue)
+    "accent_warning": "#f59e0b",
+    "accent_info": "#3b82f6",
 
     # Message-specific colors
     "user_msg_text": "#fafafa",
@@ -81,6 +83,149 @@ COLORS = {
     "debug_bg": "rgba(59, 130, 246, 0.08)",
     "debug_border": "rgba(59, 130, 246, 0.3)",
 }
+
+_COLORS_LIGHT = {
+    # Background colors
+    "bg_primary": "#ffffff",
+    "bg_secondary": "#f8f9fa",
+    "bg_tertiary": "#f0f1f3",
+    "bg_input": "#ffffff",
+    "bg_hover": "#e9ecef",
+
+    # Border colors
+    "border_subtle": "#e9ecef",
+    "border_default": "#dee2e6",
+    "border_focus": "#3b82f6",
+    "border_hover": "#ced4da",
+
+    # Text colors
+    "text_primary": "#1a1a1a",
+    "text_secondary": "#6b7280",
+    "text_muted": "#9ca3af",
+    "text_placeholder": "#9ca3af",
+
+    # Accent colors (same hues, slightly adjusted for light bg)
+    "accent_primary": "#2563eb",
+    "accent_primary_hover": "#1d4ed8",
+    "accent_success": "#16a34a",
+    "accent_success_hover": "#15803d",
+    "accent_error": "#dc2626",
+    "accent_error_hover": "#b91c1c",
+    "accent_warning": "#d97706",
+    "accent_info": "#2563eb",
+
+    # Message-specific colors
+    "user_msg_text": "#1a1a1a",
+    "assistant_card_bg": "#f8f9fa",
+    "assistant_card_border": "#e9ecef",
+    "assistant_text": "#374151",
+    "system_text": "#9ca3af",
+    "error_bg": "rgba(220, 38, 38, 0.06)",
+    "error_border": "#fca5a5",
+    "error_text": "#b91c1c",
+
+    # Code block colors
+    "code_bg": "#f4f5f7",
+    "code_border": "#e2e4e8",
+    "code_header_bg": "#ebedf0",
+    "code_text": "#374151",
+
+    # Preview widget colors
+    "preview_bg": "rgba(37, 99, 235, 0.05)",
+    "preview_border": "rgba(37, 99, 235, 0.2)",
+    "preview_text": "#1d4ed8",
+
+    # Change widget colors
+    "change_created": "#16a34a",
+    "change_created_bg": "rgba(22, 163, 74, 0.08)",
+    "change_modified": "#2563eb",
+    "change_modified_bg": "rgba(37, 99, 235, 0.08)",
+    "change_deleted": "#dc2626",
+    "change_deleted_bg": "rgba(220, 38, 38, 0.08)",
+
+    # Skeleton/loading colors
+    "skeleton_base": "#e9ecef",
+    "skeleton_shimmer": "#dee2e6",
+
+    # Scrollbar colors
+    "scrollbar_bg": "transparent",
+    "scrollbar_handle": "#ced4da",
+    "scrollbar_handle_hover": "#adb5bd",
+
+    # Debug panel colors
+    "debug_accent": "#2563eb",
+    "debug_bg": "rgba(37, 99, 235, 0.06)",
+    "debug_border": "rgba(37, 99, 235, 0.25)",
+}
+
+# Active color palette — updated in-place by set_theme()
+COLORS = dict(_COLORS_DARK)
+
+# Track current theme state
+_is_dark = True
+
+# Callbacks registered by UI components to refresh on theme change
+_theme_change_callbacks = []
+
+
+def is_dark_theme():
+    """Return True if the current theme is dark."""
+    return _is_dark
+
+
+def detect_dark_theme():
+    """Detect whether FreeCAD is using a dark theme."""
+    try:
+        hGrp = FreeCAD.ParamGet("User parameter:BaseApp/Preferences/MainWindow")
+        theme = hGrp.GetString("Theme", "")
+        if "dark" in theme.lower():
+            return True
+        if "light" in theme.lower():
+            return False
+    except Exception:
+        pass
+    # Fallback: check Qt palette
+    try:
+        from PySide6.QtWidgets import QApplication
+        from PySide6.QtGui import QPalette
+        palette = QApplication.palette()
+        bg = palette.color(QPalette.ColorRole.Window)
+        return bg.lightness() < 128
+    except Exception:
+        return True  # Default to dark
+
+
+def set_theme(dark=True):
+    """Switch the active color palette. Call refresh callbacks."""
+    global _is_dark
+    _is_dark = dark
+    source = _COLORS_DARK if dark else _COLORS_LIGHT
+    COLORS.update(source)
+    FreeCAD.Console.PrintMessage(
+        f"AIAssistant: Theme set to {'dark' if dark else 'light'}\n"
+    )
+    for cb in _theme_change_callbacks:
+        try:
+            cb()
+        except Exception as e:
+            FreeCAD.Console.PrintWarning(f"AIAssistant: Theme callback error: {e}\n")
+
+
+def on_theme_change(callback):
+    """Register a callback to be called when the theme changes."""
+    _theme_change_callbacks.append(callback)
+
+
+def remove_theme_callback(callback):
+    """Remove a previously registered theme change callback."""
+    try:
+        _theme_change_callbacks.remove(callback)
+    except ValueError:
+        pass
+
+
+# Auto-detect on import
+set_theme(detect_dark_theme())
 
 # =============================================================================
 # TYPOGRAPHY

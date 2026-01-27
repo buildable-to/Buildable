@@ -106,6 +106,9 @@ class AIAssistantDockWidget(QtWidgets.QDockWidget):
         # Log panel opened
         ActivityLogger.log_panel_opened()
 
+        # Watch for theme changes
+        self._setup_theme_observer()
+
     def _setup_ui(self):
         """Build the UI."""
         main = QtWidgets.QWidget()
@@ -277,6 +280,78 @@ class AIAssistantDockWidget(QtWidgets.QDockWidget):
         clear_history.triggered.connect(self._clear_conversation)
 
         self.settings_btn.setMenu(menu)
+
+    def _setup_theme_observer(self):
+        """Watch FreeCAD theme preference changes via ParameterGrp observer."""
+        class _ThemeObserver:
+            def __init__(self, panel):
+                self._panel = panel
+
+            def slotParamChanged(self, param_grp, tp, entry, value):
+                if entry in ("Theme", "StyleSheet"):
+                    QtCore.QTimer.singleShot(200, self._panel._on_theme_param_changed)
+
+        self._theme_observer = _ThemeObserver(self)
+        # Store the param group on self to prevent the Python wrapper from
+        # being garbage collected, which would destroy the C++ observer link
+        self._theme_param_grp = FreeCAD.ParamGet(
+            "User parameter:BaseApp/Preferences/MainWindow"
+        )
+        try:
+            self._theme_param_grp.AttachManager(self._theme_observer)
+        except Exception as e:
+            FreeCAD.Console.PrintWarning(
+                f"AIAssistant: Could not attach theme observer: {e}\n"
+            )
+
+    def _on_theme_param_changed(self):
+        """Handle theme parameter change (deferred via singleShot)."""
+        is_dark = Theme.detect_dark_theme()
+        if is_dark != Theme._is_dark:
+            Theme.set_theme(is_dark)
+            self._apply_theme()
+
+    def _apply_theme(self):
+        """Re-apply theme colors by rebuilding the UI."""
+        # Save state
+        old_messages = []
+        try:
+            old_messages = list(self._chat._chat_list._model._messages)
+        except Exception:
+            pass
+
+        # Save settings checkboxes state
+        settings_state = {}
+        for attr in ("context_action", "autorun_action", "auto_accept_action",
+                      "plan_mode_action", "streaming_action", "debug_action"):
+            try:
+                settings_state[attr] = getattr(self, attr).isChecked()
+            except Exception:
+                pass
+
+        old_widget = self.widget()
+        self._setup_ui()
+        self._connect_signals()
+        if old_widget:
+            old_widget.deleteLater()
+
+        # Restore settings
+        for attr, checked in settings_state.items():
+            try:
+                getattr(self, attr).setChecked(checked)
+            except Exception:
+                pass
+
+        # Restore messages
+        if old_messages:
+            try:
+                model = self._chat._chat_list._model
+                for msg in old_messages:
+                    model.add_message(msg.text, msg.role, changes=msg.changes)
+            except Exception as e:
+                FreeCAD.Console.PrintWarning(
+                    f"AIAssistant: Could not restore messages after theme change: {e}\n"
+                )
 
     def _connect_signals(self):
         """Connect UI signals."""
