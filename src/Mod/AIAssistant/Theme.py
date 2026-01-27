@@ -27,8 +27,8 @@ _COLORS_DARK = {
     # Text colors
     "text_primary": "#fafafa",
     "text_secondary": "#a1a1aa",
-    "text_muted": "#52525b",
-    "text_placeholder": "#71717a",
+    "text_muted": "#71717a",
+    "text_placeholder": "#a1a1aa",
 
     # Accent colors
     "accent_primary": "#3b82f6",
@@ -45,7 +45,7 @@ _COLORS_DARK = {
     "assistant_card_bg": "#0f0f11",
     "assistant_card_border": "#1c1c1f",
     "assistant_text": "#e4e4e7",
-    "system_text": "#71717a",
+    "system_text": "#a1a1aa",
     "error_bg": "rgba(239, 68, 68, 0.08)",
     "error_border": "#7f1d1d",
     "error_text": "#fca5a5",
@@ -100,9 +100,9 @@ _COLORS_LIGHT = {
 
     # Text colors
     "text_primary": "#1a1a1a",
-    "text_secondary": "#6b7280",
-    "text_muted": "#9ca3af",
-    "text_placeholder": "#9ca3af",
+    "text_secondary": "#4b5563",
+    "text_muted": "#6b7280",
+    "text_placeholder": "#6b7280",
 
     # Accent colors (same hues, slightly adjusted for light bg)
     "accent_primary": "#2563eb",
@@ -119,7 +119,7 @@ _COLORS_LIGHT = {
     "assistant_card_bg": "#f8f9fa",
     "assistant_card_border": "#e9ecef",
     "assistant_text": "#374151",
-    "system_text": "#9ca3af",
+    "system_text": "#6b7280",
     "error_bg": "rgba(220, 38, 38, 0.06)",
     "error_border": "#fca5a5",
     "error_text": "#b91c1c",
