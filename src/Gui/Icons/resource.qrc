@@ -122,6 +122,41 @@
         <file>freecadsplash8.png</file>
         <file>freecadsplash9_2x.png</file>
         <file>freecadsplash9.png</file>
+        <file>buildable.png</file>
+        <file>buildable.svg</file>
+        <file>buildable-doc.png</file>
+        <file>buildable-doc.svg</file>
+        <file>buildableabout.png</file>
+        <file>buildableabout.svg</file>
+        <file>buildableaboutdev.png</file>
+        <file>buildablesplash.png</file>
+        <file>buildablesplash_2x.png</file>
+        <file>buildablesplash0.png</file>
+        <file>buildablesplash0_2x.png</file>
+        <file>buildablesplash1.png</file>
+        <file>buildablesplash1_2x.png</file>
+        <file>buildablesplash2.png</file>
+        <file>buildablesplash2_2x.png</file>
+        <file>buildablesplash3.png</file>
+        <file>buildablesplash3_2x.png</file>
+        <file>buildablesplash4.png</file>
+        <file>buildablesplash4_2x.png</file>
+        <file>buildablesplash5.png</file>
+        <file>buildablesplash5_2x.png</file>
+        <file>buildablesplash6.png</file>
+        <file>buildablesplash6_2x.png</file>
+        <file>buildablesplash7.png</file>
+        <file>buildablesplash7_2x.png</file>
+        <file>buildablesplash8.png</file>
+        <file>buildablesplash8_2x.png</file>
+        <file>buildablesplash9.png</file>
+        <file>buildablesplash9_2x.png</file>
+        <file>buildablesplash10.png</file>
+        <file>buildablesplash10_2x.png</file>
+        <file>buildablesplash11.png</file>
+        <file>buildablesplash11_2x.png</file>
+        <file>buildablesplash12.png</file>
+        <file>buildablesplash12_2x.png</file>
         <file>Geoassembly.svg</file>
         <file>Geofeaturegroup.svg</file>
         <file>Group.svg</file>
@@ -335,6 +370,9 @@
         <file>freecad.svg</file>
         <file>freecad-doc.png</file>
         <file>freecad-doc.svg</file>
+        <file>buildable.svg</file>
+        <file>buildable-doc.png</file>
+        <file>buildable-doc.svg</file>
         <file>bulb.svg</file>
         <file>button_down.svg</file>
         <file>button_left.svg</file>
