@@ -768,7 +768,7 @@ void DlgSettingsGeneral::onImportConfigClicked()
     auto path = fs::path(
         QFileDialog::getOpenFileName(
             this,
-            tr("Choose a FreeCAD config file to import"),
+            tr("Choose a Buildable config file to import"),
             QString(),
             QStringLiteral("*.cfg")
         )

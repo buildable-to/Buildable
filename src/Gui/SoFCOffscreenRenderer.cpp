@@ -117,7 +117,7 @@ void SoFCOffscreenRenderer::writeToImageFile(
         // writing comment in case of jpeg (Qt ignores setText() in case of jpeg)
         std::string com;
         if (strcmp(comment, "") == 0) {
-            com = "Screenshot created by FreeCAD";
+            com = "Screenshot created by Buildable";
         }
         else if (strcmp(comment, "$MIBA") == 0) {
             com = createMIBA(mat);
@@ -163,11 +163,11 @@ void SoFCOffscreenRenderer::writeToImageFile(
             // set keywords for PNG format
             if (file.hasExtension("PNG")) {
                 img.setText(QLatin1String("Title"), QString::fromUtf8(filename));
-                img.setText(QLatin1String("Author"), QLatin1String("FreeCAD (https://www.freecad.org)"));
+                img.setText(QLatin1String("Author"), QLatin1String("Buildable (https://buildable.to)"));
                 if (strcmp(comment, "") == 0) {
                     img.setText(
                         QLatin1String("Description"),
-                        QLatin1String("Screenshot created by FreeCAD")
+                        QLatin1String("Screenshot created by Buildable")
                     );
                 }
                 else if (strcmp(comment, "$MIBA") == 0) {

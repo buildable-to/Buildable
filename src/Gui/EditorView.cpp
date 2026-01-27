@@ -377,7 +377,7 @@ bool EditorView::saveAs()
         this,
         QObject::tr("Save Macro"),
         QString(),
-        QStringLiteral("%1 (*.FCMacro);;Python (*.py)").arg(tr("FreeCAD macro"))
+        QStringLiteral("%1 (*.FCMacro);;Python (*.py)").arg(tr("Buildable macro"))
     );
     if (fn.isEmpty()) {
         return false;

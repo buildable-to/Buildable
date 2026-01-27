@@ -46,7 +46,7 @@ This is currently not available.</string>
          <string>Set this to a custom URL or the folder where the help files are located.
 You can easily download the documentation for offline use by using the Addon
 Manager and installing the &quot;offline-documentation&quot; addon. If this
-field is left blank, FreeCAD will automatically search for the help files at
+field is left blank, Buildable will automatically search for the help files at
 the default location ($USERAPPDATADIR/Mod/offline-documentation).</string>
         </property>
         <property name="text">
@@ -85,7 +85,7 @@ to get French translation of the documentation.</string>
         <property name="toolTip">
          <string>Set this to a custom URL or the folder where the help files are located.
 Documentation can be downloaded for offline use via the Addon Manager and installing the
-&quot;offline-documentation&quot; addon. If this field is left blank, FreeCAD will
+&quot;offline-documentation&quot; addon. If this field is left blank, Buildable will
 automatically search for the help files at the default location
 ($USERAPPDATADIR/Mod/offline-documentation).</string>
         </property>
@@ -117,10 +117,10 @@ automatically search for the help files at the default location
        <widget class="Gui::PrefRadioButton" name="radioButton">
         <property name="toolTip">
          <string>The documentation pages will be fetched from the official
-FreeCADwiki at https://wiki.freecad.org</string>
+Buildable docs at https://buildable.to/docs</string>
         </property>
         <property name="text">
-         <string>FreeCAD Wiki (online)</string>
+         <string>Buildable Wiki (online)</string>
         </property>
         <property name="checked">
          <bool>true</bool>
@@ -137,7 +137,7 @@ FreeCADwiki at https://wiki.freecad.org</string>
        <widget class="Gui::PrefRadioButton" name="radioOnline">
         <property name="toolTip">
          <string>The documentation pages will be fetched from an automatic Markdown conversion
-of the FreeCAD wiki,hosted on FreeCAD's GitHub account. This can be styled with a
+of the Buildable wiki,hosted on Buildable's GitHub account. This can be styled with a
 custom stylesheet below and can look nicer than the wiki option. The 'Markdown' or
 'Pandoc' Python module should be installed for optimal results.</string>
         </property>
@@ -196,10 +196,10 @@ custom stylesheet below and can look nicer than the wiki option. The 'Markdown' 
       <item>
        <widget class="Gui::PrefRadioButton" name="radioTab">
         <property name="toolTip">
-         <string>The documentation will open in a new tab inside the FreeCAD interface. This requires the PySide QtWebengineWidgets component.</string>
+         <string>The documentation will open in a new tab inside the Buildable interface. This requires the PySide QtWebengineWidgets component.</string>
         </property>
         <property name="text">
-         <string>In a FreeCAD tab</string>
+         <string>In a Buildable tab</string>
         </property>
         <property name="checked">
          <bool>false</bool>
@@ -218,7 +218,7 @@ custom stylesheet below and can look nicer than the wiki option. The 'Markdown' 
          <bool>true</bool>
         </property>
         <property name="toolTip">
-        <string>Documentation opens in a dockable dialog within FreeCAD, allowing simultaneous work in the 3D view.
+        <string>Documentation opens in a dockable dialog within Buildable, allowing simultaneous work in the 3D view.
 Requires the PySide QtWebengineWidgets component.</string>
         </property>
         <property name="text">

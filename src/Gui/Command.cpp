@@ -970,7 +970,7 @@ const char* Command::beginCmdHelp()
            "<html>\n"
            "<head>\n"
            "<meta http-equiv=\"Content-Type\" content=\"text/html; charset=ISO-8859-1\">\n"
-           "<title>FreeCAD Main Index</title>\n"
+           "<title>Buildable Main Index</title>\n"
            "</head>\n"
            "<body bgcolor=\"#ffffff\">\n\n";
 }
