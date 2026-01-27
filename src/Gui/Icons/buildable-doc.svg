@@ -1,5 +1,23 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"
-     viewBox="0 0 64 64" width="64" height="64">
-  <image width="64" height="64" xlink:href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAAFYElEQVR4nO2bTU9UVxjHf+e+zDCORJBKHcBFi25IDGwEF2Lpy0YTxbVN1VJj/Q72e0hdaeyiaT9GITZRILFubCJBEYGBAadxnHvnnpcu7swI1VZe5gwd4Z/M4k7OvfOc33nOc57nuRnY0572tJsl3jfg9u3bph6G1FJXrlx577wq8jYy6PLly/mtm7M93blz58BmbKiM36icrRhVb506dWrTE9uoGgIA2IPQMADADoSGAgC1h9BwAKC2EBoSANQOQsMCgNpAaGgAsH0IDQ8AtgfhgwAAW4ewoVR4pzU2Nmbt2f97AJutQz7IWsCmdj2A7WwBK9XZJlSTEn3Xe8CuB2DvFDCGzfbShNhwJ6tmsgdAiPc3HN8hY0xdQVgD8OLFPKurqyQSCbQxMQwB78QiBEZrOjs7SKfTdYVgBUAYhhw82Mrs7CzLy0skk0mMIe5Bl/fF+vkJjDEsZhfp6+2lubm5bhBqGgSNiWeXy+V4/PhPBgb66erqQipFIuHjez5+wieR8PH8tR+PRDJBVCoxOTVFPp9HCFF9nk1Z8QDP85iZmUEpRV9fL57n8ezZMxLJJPDmZURlevH2EAjHQUaSyckp+vr6aG1tse4JVgBobfB9n7m5OYIg4OTJfnzfZ3p6Gsdx4R/ng3AcHOFghMFxHMIwJJvN0traYsO8dbIUBA2RjGhKJlleXmZsbJyB/n4ymQxa67J7x+Mcx2FhYYEnT57g+z7a6Or39ZAVAMYYjNZIqfB9n8XFLM/n5uju7n7n+Hz+L5TWuMYgMCilyyDsyxpmreNJKCVxHOc/V1TKEjKKwJjqfdQhAIJFD1BK4yoFCJRSAEgpCYKwDMNgDDiOoLOzi9nZ56ysrJBKpdBKV++xLYsAJFI5CARSRniex/T0NBMTkzQ1NWGMJoYjOX78OIODg4yPjzM/P4/nebS0tNgw7S1ZAyClxHFdRNkDTNm9S1GI6zpoHQMQAu7ff0AYljhx4gQPHz6kvb2djo4OwH59YCUGaK2RSqGUQmmFLAMwGDDlIAlUyiXP85icmKBUKnHs2DGOHDkCUJdEyAoAY0BJteYjMYCMJIVCgWIxoFgsEhSLvCoUCIIi54fPk81mOX/uHDdu/EAYho2bCRqjkTLCdePor5RCK8W+VIr2Q4doSjWhtUGIODCePv0ZC/MLXPv+GkFQ5Ndffqb700/47upVlFK4rmvDTMBiDIiiCNd1qwCCIKCnp4fuo0ffGv/oj0dcuvQNxhiam/cTFF+z+vKlDdPekqVUWBNFceQXQhDJCCkVUkq01tWcoLK6DyYekM/nOXz4Y6Ioio9Qi6u+VjUFUClcKh7geR6u61J4VYgrQG/9z1Wu29oO4rhv8gWtdV32P9TBA3K5HENDQ2QyGX66ezde2XJ3JPYGwdTkJAk/gSpfC0c0diZYAVAoFDhz5gy9vb2MfHuF3+/doymVKidBFQmSyQSpfftQUuIlk7wuvGbzHcWtyQoApRS5XI6RkREymQwXhod5+nSGjq5OtNLVhkC1L1BOnX3fZ2kpS//AABcvfo0x9qtCax5w/fp10uk0F4YvsPpyhba2j+KCB6pbIO4LxBg832dpeYmB/gF+vHWLAwfsN0OgxgAcJ05xe3p6GPttjLNnzxKGIfvTabJL2X9tjDquQ1As8sWXX3Hz5ijpdHrdaWFTNfcAIUT1JBgdHSWVSqGUjCct3rS/KDdEYh+IA+Lg4CCJZLJukwdLAACGPh/a0v312PdrZe29wFbOcsdx6v52yBqAeq7idtQYVlrUrgewnS2wY/8hqKV2vQfsAdhpA3ZaewB22oCd1q4HsKFj0NY/tva0pz3tuP4GcUaXA+OiSoIAAAAASUVORK5CYII="/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <defs>
+    <linearGradient id="g1" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#b0b0b0"/>
+      <stop offset="100%" stop-color="#707070"/>
+    </linearGradient>
+    <linearGradient id="g2" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#606060"/>
+      <stop offset="100%" stop-color="#2a2a2a"/>
+    </linearGradient>
+  </defs>
+  <!-- Document page -->
+  <path d="M10,4 L42,4 L54,16 L54,60 L10,60 Z" fill="#ffffff" stroke="#a0a0a0" stroke-width="1"/>
+  <path d="M42,4 L42,16 L54,16" fill="#e0e0e0" stroke="#a0a0a0" stroke-width="1"/>
+  <!-- Small B logo -->
+  <g transform="translate(16,22) scale(0.5)">
+    <path d="M40,20 L175,20 L175,75 L110,75 L110,115 L160,115 L160,75 L215,105 L215,155 L160,155 L110,155 L110,195 L185,195 L185,155 L215,170 L215,235 L40,235 Z" 
+          fill="url(#g1)" stroke="none" transform="scale(0.15)"/>
+    <path d="M175,20 L215,40 L215,105 L160,75 L160,115 L215,155 L215,170 L185,155 L185,195 L110,195 L110,235 L215,235 L215,40 Z"
+          fill="url(#g2)" stroke="none" transform="scale(0.15)"/>
+  </g>
 </svg>
