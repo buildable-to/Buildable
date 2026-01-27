@@ -3,7 +3,7 @@
 ### AI-Powered CAD Application
 
 [Website](https://buildable.to) •
-[Documentation](https://buildable.to/docs) •
+[Documentation](https://wiki.freecad.org) •
 [Bug tracker](https://github.com/buildable-to/Buildable/issues) •
 [Git repository](https://github.com/buildable-to/Buildable)
 
@@ -51,9 +51,9 @@ Compiling
 Buildable requires several dependencies to correctly compile for development and
 production builds. The following pages contain build instructions:
 
-- [Linux](https://buildable.to/docs/compile-linux)
-- [Windows](https://buildable.to/docs/compile-windows)
-- [macOS](https://buildable.to/docs/compile-macos)
+- [Linux](https://wiki.freecad.org/Compile_on_Linux)
+- [Windows](https://wiki.freecad.org/Compile_on_Windows)
+- [macOS](https://wiki.freecad.org/Compile_on_MacOS)
 
 
 Reporting Issues
@@ -80,9 +80,10 @@ The Buildable documentation contains information on
 general usage, Python scripting, and development.
 View these pages for more information:
 
-- [Getting started](https://buildable.to/docs/getting-started)
-- [Features list](https://buildable.to/docs/features)
-- [Scripting](https://buildable.to/docs/scripting)
+- [Getting started](https://wiki.freecad.org/Getting_started)
+- [Features list](https://wiki.freecad.org/Feature_list)
+- [Scripting](https://wiki.freecad.org/Power_users_hub)
+- [Developers Handbook](https://freecad.github.io/DevelopersHandbook/)
 
 ---
 
