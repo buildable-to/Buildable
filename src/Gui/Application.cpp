@@ -2433,6 +2433,13 @@ void setAppNameAndIcon()
     else {
         QApplication::setApplicationName(QString::fromStdString(App::Application::getExecutableName()));
     }
+
+    // Set desktop file name so GNOME/Wayland can match the correct .desktop entry
+    auto dfIt = cfg.find("DesktopFileName");
+    if (dfIt != cfg.end()) {
+        QApplication::setDesktopFileName(QString::fromUtf8(dfIt->second.c_str()));
+    }
+
 #ifndef Q_OS_MACOS
     QApplication::setWindowIcon(
         Gui::BitmapFactory().pixmap(App::Application::Config()["AppIcon"].c_str())
