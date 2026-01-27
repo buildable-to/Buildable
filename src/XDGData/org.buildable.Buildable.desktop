@@ -1,0 +1,12 @@
+[Desktop Entry]
+Name=Buildable
+Comment=AI-Powered CAD Application
+GenericName=CAD Application
+Exec=Buildable - --single-instance %F
+Terminal=false
+Type=Application
+Icon=org.buildable.Buildable
+Categories=Graphics;Science;Education;Engineering;X-CNC;
+StartupNotify=true
+StartupWMClass=Buildable
+MimeType=application/x-extension-fcstd;model/obj;image/vnd.dwg;image/vnd.dxf;model/vnd.collada+xml;application/iges;model/iges;model/step;model/step+zip;model/stl;application/vnd.shp;model/vrml;
