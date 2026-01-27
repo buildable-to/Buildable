@@ -12,7 +12,7 @@ Configuration and variables of FreeCAD installer
 #--------------------------------
 # Names and version
 
-!define APP_NAME "FreeCAD"
+!define APP_NAME "Buildable"
 !define APP_VERSION_NUMBER "${APP_VERSION_MAJOR}.${APP_VERSION_MINOR}.${APP_VERSION_PATCH}.${APP_VERSION_BUILD}"
 # For the proposed install folder we use the scheme "FreeCAD 0.18" 
 # however for the Registry, we need the scheme "FreeCAD 0.18.x" in order
@@ -25,11 +25,11 @@ Configuration and variables of FreeCAD installer
 # Fixme: FC should use different preferences folder for every release
 !define APP_DIR_USERDATA ${APP_NAME}
 #!define APP_DIR_USERDATA "${APP_NAME}${APP_VERSION_MAJOR}.${APP_VERSION_MINOR}"
-!define APP_SHORTCUT_INFO "${APP_NAME} - Your Own 3D Parametric Modeler"
+!define APP_SHORTCUT_INFO "${APP_NAME} - AI-Powered CAD"
 !define APP_INFO "Install/Uninstall ${APP_NAME}"
-!define APP_WEBPAGE "https://www.freecad.org/"
+!define APP_WEBPAGE "https://buildable.to/"
 !define APP_WEBPAGE_INFO "${APP_NAME} Website"
-!define APP_WIKI "https://wiki.freecad.org/Main_Page"
+!define APP_WIKI "https://buildable.to/docs"
 !define APP_WIKI_INFO "${APP_NAME} Wiki"
 !define APP_COPYRIGHT "${APP_NAME} is Copyright © 2001-${COPYRIGHT_YEAR} by the ${APP_NAME} Team"
 
@@ -58,7 +58,7 @@ Configuration and variables of FreeCAD installer
 
 !define SETUP_EXE ${ExeFile}
 
-!define SETUP_ICON "icons\FreeCAD.ico"
+!define SETUP_ICON "icons\Buildable.ico"
 !define SETUP_HEADERIMAGE "graphics\header.bmp"
 !define SETUP_WIZARDIMAGE "graphics\banner.bmp"
 !define SETUP_UNINSTALLER "Uninstall-${APP_NAME}.exe"
