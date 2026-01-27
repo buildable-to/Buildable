@@ -12,7 +12,7 @@ Installation of program files, dictionaries and external components
 
 Section -ProgramFiles SecProgramFiles
 
-  # if the $INSTDIR does not contain "FreeCAD" we must add a subfolder to avoid that FreeCAD will e.g.
+  # if the $INSTDIR does not contain "Buildable" we must add a subfolder to avoid that Buildable will e.g.
   # be installed directly to C:\programs - the uninstaller will then delete the whole
   # C:\programs directory
   StrCpy $String "$INSTDIR"
@@ -27,7 +27,7 @@ Section -ProgramFiles SecProgramFiles
   # to $INSTDIR must have a valid path before logging can be turned on
   LogSet on
 
-  # Install and register the core FreeCAD files
+  # Install and register the core Buildable files
   
   # Initializes the plug-ins dir ($PLUGINSDIR) if not already initialized.
   # $PLUGINSDIR is automatically deleted when the installer exits.
@@ -36,7 +36,7 @@ Section -ProgramFiles SecProgramFiles
   # Binaries
   SetOutPath "$INSTDIR\bin"
   # recursively copy all files under bin
-  File /r "${FILES_FREECAD}\bin\*.*"
+  File /r "${FILES_BUILDABLE}\bin\*.*"
   
   # MSVC redistributable DLLs
   !ifdef FILES_DEPS
@@ -47,15 +47,15 @@ Section -ProgramFiles SecProgramFiles
   
   # Others
   SetOutPath "$INSTDIR\data"
-  File /r "${FILES_FREECAD}\data\*.*"
+  File /r "${FILES_BUILDABLE}\data\*.*"
   SetOutPath "$INSTDIR\doc"
-  File /r "${FILES_FREECAD}\doc\*.*"
+  File /r "${FILES_BUILDABLE}\doc\*.*"
   SetOutPath "$INSTDIR\Ext"
-  File /r "${FILES_FREECAD}\Ext\*.*"
+  File /r "${FILES_BUILDABLE}\Ext\*.*"
   SetOutPath "$INSTDIR\lib"
-  File /r "${FILES_FREECAD}\lib\*.*"
+  File /r "${FILES_BUILDABLE}\lib\*.*"
   SetOutPath "$INSTDIR\Mod"
-  File /r "${FILES_FREECAD}\Mod\*.*"
+  File /r "${FILES_BUILDABLE}\Mod\*.*"
   SetOutPath "$INSTDIR"
   File /r "${FILES_THUMBS}"
     

@@ -1,7 +1,7 @@
 ﻿/*
 declaration.nsh
 
-Configuration and variables of FreeCAD installer
+Configuration and variables of Buildable installer
 */
 
 #--------------------------------
@@ -14,8 +14,8 @@ Configuration and variables of FreeCAD installer
 
 !define APP_NAME "Buildable"
 !define APP_VERSION_NUMBER "${APP_VERSION_MAJOR}.${APP_VERSION_MINOR}.${APP_VERSION_PATCH}.${APP_VERSION_BUILD}"
-# For the proposed install folder we use the scheme "FreeCAD 0.18" 
-# however for the Registry, we need the scheme "FreeCAD 0.18.x" in order
+# For the proposed install folder we use the scheme "Buildable 0.18" 
+# however for the Registry, we need the scheme "Buildable 0.18.x" in order
 # to check if it is exactly this version (to support side-by-side installations)
 !define APP_SERIES_NAME "${APP_VERSION_MAJOR}.${APP_VERSION_MINOR}"
 !define APP_SERIES_KEY "${APP_VERSION_MAJOR}${APP_VERSION_MINOR}${APP_VERSION_PATCH}${APP_VERSION_EMERGENCY}"
@@ -34,9 +34,9 @@ Configuration and variables of FreeCAD installer
 !define APP_COPYRIGHT "${APP_NAME} is Copyright © 2001-${COPYRIGHT_YEAR} by the ${APP_NAME} Team"
 
 !define APP_RUN "bin\${APP_NAME}.exe"
-!define BIN_FREECAD "${APP_NAME}.exe"
+!define BIN_BUILDABLE "${APP_NAME}.exe"
 
-!define APP_REGKEY "SOFTWARE\${APP_NAME}${APP_SERIES_KEY}" # like "FreeCAD0180"
+!define APP_REGKEY "SOFTWARE\${APP_NAME}${APP_SERIES_KEY}" # like "Buildable0180"
 !define APP_REGKEY_SETUP "${APP_REGKEY}\Setup"
 !define APP_REGKEY_SETTINGS "${APP_REGKEY}\Settings"
 

@@ -1,7 +1,7 @@
 ﻿# This script contains the following functions:
 #
 # - un.DelAppPathSub and UnAppPreSuff,
-#    (delete the folder ~\Documents and Settings\username\Application Data\FreeCAD for all users), uses:
+#    (delete the folder ~\Documents and Settings\username\Application Data\Buildable for all users), uses:
 #    un.GetParentA
 #    un.GetUsers
 #    un.StrPoint
