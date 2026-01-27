@@ -4,6 +4,9 @@ configure_file(freecad.rc.cmake ${CMAKE_CURRENT_BINARY_DIR}/freecad.rc)
 configure_file(freecadCmd.rc.cmake ${CMAKE_CURRENT_BINARY_DIR}/freecadCmd.rc)
 file(COPY icon.ico DESTINATION ${CMAKE_CURRENT_BINARY_DIR})
 
+# Install Buildable branding file
+install(FILES branding.xml DESTINATION ${CMAKE_INSTALL_BINDIR})
+
 ######################## FreeCADMain ########################
 if(BUILD_GUI)
 

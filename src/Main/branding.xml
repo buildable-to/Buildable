@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Branding version="1.0">
+    <Application>Buildable</Application>
+    <ExeName>Buildable</ExeName>
+    <ExeVendor>Buildable</ExeVendor>
+    <WindowTitle>Buildable</WindowTitle>
+    <CopyrightInfo>(C) 2025 Buildable Team. Proprietary software based on FreeCAD.</CopyrightInfo>
+    <MaintainerUrl>https://buildable.to</MaintainerUrl>
+    <DesktopFileName>org.buildable.Buildable</DesktopFileName>
+    <AppIcon>buildable</AppIcon>
+    <SplashScreen>buildablesplash</SplashScreen>
+    <AboutImage>buildableabout</AboutImage>
+    <StartWorkbench>DraftWorkbench</StartWorkbench>
+</Branding>
