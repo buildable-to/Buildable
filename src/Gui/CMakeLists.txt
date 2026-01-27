@@ -1572,13 +1572,13 @@ else(WIN32)
     INSTALL(TARGETS FreeCADGui
         LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
     )
-    INSTALL(FILES Icons/freecad-icon-16.png DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/icons/hicolor/16x16/apps RENAME org.freecad.FreeCAD.png)
-    INSTALL(FILES Icons/freecad-icon-32.png DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/icons/hicolor/32x32/apps RENAME org.freecad.FreeCAD.png)
-    INSTALL(FILES Icons/freecad-icon-48.png DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/icons/hicolor/48x48/apps RENAME org.freecad.FreeCAD.png)
-    INSTALL(FILES Icons/freecad-icon-64.png DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/icons/hicolor/64x64/apps RENAME org.freecad.FreeCAD.png)
-    INSTALL(FILES Icons/freecad.svg DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/icons/hicolor/scalable/apps RENAME org.freecad.FreeCAD.svg)
-    INSTALL(FILES Icons/freecad.svg DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/pixmaps)
-    INSTALL(FILES Icons/freecad-doc.svg DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/icons/hicolor/scalable/mimetypes RENAME application-x-extension-fcstd.svg)
+    INSTALL(FILES Icons/buildable-icon-16.png DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/icons/hicolor/16x16/apps RENAME org.buildable.Buildable.png)
+    INSTALL(FILES Icons/buildable-icon-32.png DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/icons/hicolor/32x32/apps RENAME org.buildable.Buildable.png)
+    INSTALL(FILES Icons/buildable-icon-48.png DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/icons/hicolor/48x48/apps RENAME org.buildable.Buildable.png)
+    INSTALL(FILES Icons/buildable-icon-64.png DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/icons/hicolor/64x64/apps RENAME org.buildable.Buildable.png)
+    INSTALL(FILES Icons/buildable.svg DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/icons/hicolor/scalable/apps RENAME org.buildable.Buildable.svg)
+    INSTALL(FILES Icons/buildable.svg DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/pixmaps)
+    INSTALL(FILES Icons/buildable-doc.svg DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/icons/hicolor/scalable/mimetypes RENAME application-x-extension-fcstd.svg)
 endif(WIN32)
 
 set(FreeCADGui_Scripts
