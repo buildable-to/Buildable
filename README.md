@@ -1,4 +1,4 @@
-<a href="https://buildable.to"><img src="/src/Gui/Icons/freecad.svg" height="100px" width="100px"></a>
+<a href="https://buildable.to"><img src="/src/Gui/Icons/buildable.svg" height="100px" width="100px"></a>
 
 ### AI-Powered CAD Application
 
