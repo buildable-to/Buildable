@@ -338,11 +338,11 @@ PyMOD_INIT_FUNC(FreeCADGui)
     try {
         // clang-format off
         Base::Interpreter().loadModule("FreeCAD");
-        App::Application::Config()["AppIcon"] = "freecad";
-        App::Application::Config()["SplashScreen"] = "freecadsplash";
-        App::Application::Config()["CopyrightInfo"] = fmt::format("\xc2\xa9 Juergen Riegel, Werner Mayer, Yorik van Havre and others 2001-{}\n", FCCopyrightYear);
-        App::Application::Config()["LicenseInfo"] = "FreeCAD is free and open-source software licensed under the terms of LGPL2+ license.\n";
-        App::Application::Config()["CreditsInfo"] = "FreeCAD would not be possible without the FreeCAD community.\n";
+        App::Application::Config()["AppIcon"] = "buildable";
+        App::Application::Config()["SplashScreen"] = "buildablesplash";
+        App::Application::Config()["CopyrightInfo"] = fmt::format("\xc2\xa9 Buildable Team & FreeCAD contributors 2001-{}\n", FCCopyrightYear);
+        App::Application::Config()["LicenseInfo"] = "Buildable is proprietary software. Based on FreeCAD (LGPL2+).\n";
+        App::Application::Config()["CreditsInfo"] = "Buildable would not be possible without the FreeCAD community.\n";
         // clang-format on
 
         // it's possible that the GUI is already initialized when the Gui version of the executable

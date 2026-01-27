@@ -55,8 +55,8 @@
 void PrintInitHelp();
 
 const auto sBanner = fmt::format(
-    "(C) 2001-{} FreeCAD contributors\n"
-    "FreeCAD is free and open-source software licensed under the terms of LGPL2+ license.\n\n",
+    "(C) 2001-{} Buildable Team & FreeCAD contributors\n"
+    "Buildable is proprietary software. Based on FreeCAD (LGPL2+).\n\n",
     FCCopyrightYear
 );
 
@@ -188,26 +188,26 @@ int main(int argc, char** argv)
 #endif
 
     // Name and Version of the Application
-    App::Application::Config()["ExeName"] = "FreeCAD";
-    App::Application::Config()["ExeVendor"] = "FreeCAD";
+    App::Application::Config()["ExeName"] = "Buildable";
+    App::Application::Config()["ExeVendor"] = "Buildable";
     App::Application::Config()["AppDataSkipVendor"] = "true";
-    App::Application::Config()["MaintainerUrl"] = "https://freecad.org";
+    App::Application::Config()["MaintainerUrl"] = "https://buildable.to";
 
     // set the banner (for logging and console)
     App::Application::Config()["CopyrightInfo"] = sBanner;
-    App::Application::Config()["AppIcon"] = "freecad";
-    App::Application::Config()["SplashScreen"] = "freecadsplash";
+    App::Application::Config()["AppIcon"] = "buildable";
+    App::Application::Config()["SplashScreen"] = "buildablesplash";
     App::Application::Config()["AboutImage"] = App::Application::isDevelopmentVersion()
-        ? "freecadaboutdev"
-        : "freecadabout";
-    App::Application::Config()["StartWorkbench"] = "PartDesignWorkbench";
+        ? "buildableaboutdev"
+        : "buildableabout";
+    App::Application::Config()["StartWorkbench"] = "DraftWorkbench";
     // App::Application::Config()["HiddenDockWindow"] = "Property editor";
     App::Application::Config()["SplashAlignment"] = "Bottom|Left";
     App::Application::Config()["SplashTextColor"] = "#418FDE";
     App::Application::Config()["SplashWarningColor"] = "#CA333B";
     App::Application::Config()["SplashInfoColor"] = "#000000";
     App::Application::Config()["SplashInfoPosition"] = "6,75";
-    App::Application::Config()["DesktopFileName"] = "org.freecad.FreeCAD";
+    App::Application::Config()["DesktopFileName"] = "org.buildable.Buildable";
 
     try {
         // Init phase ===========================================================
