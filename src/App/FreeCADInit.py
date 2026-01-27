@@ -157,7 +157,7 @@ class FCADLogger:
         ('timing', True),
         ('lineno', True),
         ('parent', None),
-        ('title', 'FreeCAD'),
+        ('title', 'Buildable'),
     )
 
     printTag: bool
