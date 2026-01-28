@@ -22,32 +22,108 @@ import FreeCAD
 def _get_claude_command() -> list:
     """Get the command to invoke Claude Code CLI.
 
-    On Windows, running claude.cmd via subprocess opens a visible console
-    window even with CREATE_NO_WINDOW, because cmd.exe is needed to run
-    .cmd batch files. To avoid this, we resolve the batch wrapper and
-    invoke node with the JS entry point directly.
+    On Windows, .cmd/.bat files require cmd.exe to execute, and cmd.exe
+    ALWAYS creates a visible console window — no combination of
+    CREATE_NO_WINDOW or STARTUPINFO flags can reliably prevent it.
+    The only reliable fix is to resolve node.exe + cli.js and invoke
+    them directly, completely bypassing cmd.exe.
+
+    Uses 4 independent lookup strategies to find node.exe and cli.js,
+    ensuring it works regardless of how Node.js/Claude were installed
+    or whether Buildable was launched from a terminal or desktop shortcut.
 
     Returns:
-        A list of command parts (e.g. ["node", "cli.js"] or ["claude"]).
+        A list of command parts (e.g. ["node.exe", "cli.js"] or ["claude"]).
     """
-    if sys.platform == "win32":
-        # Find claude.cmd (npm global install) and extract the JS entry point
-        claude_cmd = shutil.which("claude.cmd") or shutil.which("claude")
-        if claude_cmd:
-            cmd_dir = Path(claude_cmd).parent
-            cli_js = cmd_dir / "node_modules" / "@anthropic-ai" / "claude-code" / "cli.js"
-            if cli_js.exists():
-                # Find node executable
-                node_exe = cmd_dir / "node.exe"
-                if not node_exe.exists():
-                    node_exe = shutil.which("node")
-                if node_exe:
-                    return [str(node_exe), str(cli_js)]
-            # Fallback: use the resolved path (may still flash console)
-            return [claude_cmd]
+    if sys.platform != "win32":
         return ["claude"]
-    else:
+
+    # --- Step 1: Find cli.js ---
+    cli_js = None
+
+    # 1a. Resolve via claude.cmd / claude in PATH
+    for name in ("claude.cmd", "claude"):
+        found = shutil.which(name)
+        if found:
+            candidate = Path(found).parent / "node_modules" / "@anthropic-ai" / "claude-code" / "cli.js"
+            if candidate.exists():
+                cli_js = candidate
+                break
+
+    # 1b. Try %APPDATA%\npm — npm's guaranteed global install directory on Windows
+    if not cli_js:
+        appdata = os.environ.get("APPDATA", "")
+        if appdata:
+            candidate = Path(appdata) / "npm" / "node_modules" / "@anthropic-ai" / "claude-code" / "cli.js"
+            if candidate.exists():
+                cli_js = candidate
+
+    # 1c. Try USERPROFILE fallback (covers edge case where APPDATA is unset)
+    if not cli_js:
+        userprofile = os.environ.get("USERPROFILE", "")
+        if userprofile:
+            candidate = Path(userprofile) / "AppData" / "Roaming" / "npm" / "node_modules" / "@anthropic-ai" / "claude-code" / "cli.js"
+            if candidate.exists():
+                cli_js = candidate
+
+    if not cli_js:
+        FreeCAD.Console.PrintWarning(
+            "AIAssistant: Could not find claude-code cli.js — "
+            "a CMD window may appear. Install with: npm install -g @anthropic-ai/claude-code\n"
+        )
         return ["claude"]
+
+    # --- Step 2: Find node.exe ---
+    node_exe = None
+
+    # 2a. Check the npm directory (some setups bundle node.exe there)
+    npm_dir = cli_js.parents[3]  # cli.js -> claude-code -> @anthropic-ai -> node_modules -> npm_dir
+    candidate = npm_dir / "node.exe"
+    if candidate.exists():
+        node_exe = str(candidate)
+
+    # 2b. Try PATH
+    if not node_exe:
+        found = shutil.which("node.exe") or shutil.which("node")
+        if found:
+            node_exe = found
+
+    # 2c. Try well-known Node.js install locations
+    if not node_exe:
+        for node_dir in [Path(r"C:\Program Files\nodejs"), Path(r"C:\Program Files (x86)\nodejs")]:
+            candidate = node_dir / "node.exe"
+            if candidate.exists():
+                node_exe = str(candidate)
+                break
+
+    # 2d. Try Windows registry (Node.js installer registers its path here)
+    if not node_exe:
+        try:
+            import winreg
+            for hive in (winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER):
+                try:
+                    with winreg.OpenKey(hive, r"SOFTWARE\Node.js") as key:
+                        install_path = winreg.QueryValueEx(key, "InstallPath")[0]
+                        candidate = Path(install_path) / "node.exe"
+                        if candidate.exists():
+                            node_exe = str(candidate)
+                            break
+                except OSError:
+                    pass
+        except ImportError:
+            pass
+
+    if not node_exe:
+        FreeCAD.Console.PrintWarning(
+            "AIAssistant: Could not find node.exe — "
+            "a CMD window may appear. Install Node.js from https://nodejs.org/\n"
+        )
+        return ["claude"]
+
+    FreeCAD.Console.PrintMessage(
+        f"AIAssistant: Resolved node={node_exe}, cli.js={cli_js}\n"
+    )
+    return [str(node_exe), str(cli_js)]
 
 
 # System prompt template - filled at runtime with workbench-specific info
@@ -247,6 +323,10 @@ class ClaudeCodeBackend:
             kwargs = {}
             if sys.platform == "win32":
                 kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+                si = subprocess.STARTUPINFO()
+                si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                si.wShowWindow = 0  # SW_HIDE
+                kwargs["startupinfo"] = si
 
             process = subprocess.Popen(
                 cmd,
