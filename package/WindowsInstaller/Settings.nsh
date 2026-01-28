@@ -34,9 +34,13 @@ These typically need to be modified for each Buildable release
 
 #--------------------------------
 # get version info from buildablecmd
-!system "${FILES_BUILDABLE}\bin\buildablecmd.exe --safe-mode $\"${__FILEDIR__}\write_version_nsh.py$\"" = 0
+!ifndef FC_SKIP_VERSION_GEN
+    !system "${FILES_BUILDABLE}\bin\buildablecmd.exe --safe-mode $\"${__FILEDIR__}\write_version_nsh.py$\"" = 0
+!endif
 !include "${__FILEDIR__}\version.nsh"
-!delfile "${__FILEDIR__}\version.nsh"
+!ifndef FC_SKIP_VERSION_GEN
+    !delfile "${__FILEDIR__}\version.nsh"
+!endif
 
 !define APP_VERSION_EMERGENCY "" # use "1" for an emergency release of Buildable otherwise ""
 	# alternatively you can use APP_VERSION_EMERGENCY for a custom suffix of the version number
