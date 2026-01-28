@@ -19,25 +19,35 @@ from typing import Optional, List, Dict
 import FreeCAD
 
 
-def _get_claude_command() -> str:
-    """Get the correct claude command for the current platform.
+def _get_claude_command() -> list:
+    """Get the command to invoke Claude Code CLI.
 
-    On Windows with npm install, the command is 'claude.cmd'.
-    On Linux/macOS or Windows native install, it's 'claude'.
+    On Windows, running claude.cmd via subprocess opens a visible console
+    window even with CREATE_NO_WINDOW, because cmd.exe is needed to run
+    .cmd batch files. To avoid this, we resolve the batch wrapper and
+    invoke node with the JS entry point directly.
+
+    Returns:
+        A list of command parts (e.g. ["node", "cli.js"] or ["claude"]).
     """
     if sys.platform == "win32":
-        # Try to find claude in PATH
-        claude_path = shutil.which("claude")
-        if claude_path:
-            return claude_path
-        # Try claude.cmd (npm global install on Windows)
-        claude_cmd = shutil.which("claude.cmd")
+        # Find claude.cmd (npm global install) and extract the JS entry point
+        claude_cmd = shutil.which("claude.cmd") or shutil.which("claude")
         if claude_cmd:
-            return claude_cmd
-        # Fallback - let subprocess handle it
-        return "claude"
+            cmd_dir = Path(claude_cmd).parent
+            cli_js = cmd_dir / "node_modules" / "@anthropic-ai" / "claude-code" / "cli.js"
+            if cli_js.exists():
+                # Find node executable
+                node_exe = cmd_dir / "node.exe"
+                if not node_exe.exists():
+                    node_exe = shutil.which("node")
+                if node_exe:
+                    return [str(node_exe), str(cli_js)]
+            # Fallback: use the resolved path (may still flash console)
+            return [claude_cmd]
+        return ["claude"]
     else:
-        return "claude"
+        return ["claude"]
 
 
 # System prompt template - filled at runtime with workbench-specific info
@@ -186,7 +196,7 @@ class ClaudeCodeBackend:
         # Build command - use stream-json for tool visibility
         # Note: stream-json requires --verbose when used with -p (print mode)
         claude_cmd = _get_claude_command()
-        cmd = [claude_cmd, "-p", "--verbose", "--output-format", "stream-json"]
+        cmd = claude_cmd + ["-p", "--verbose", "--output-format", "stream-json"]
 
         # Allow Edit and Write tools for direct source.py modification
         cmd.extend(["--allowedTools", "Read,Glob,Grep,Edit,Write"])
