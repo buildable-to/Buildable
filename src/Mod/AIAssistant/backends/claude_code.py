@@ -233,6 +233,11 @@ class ClaudeCodeBackend:
         start_time = time.time()
         try:
             # Use Popen for streaming NDJSON output
+            # Hide console window on Windows
+            kwargs = {}
+            if sys.platform == "win32":
+                kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+
             process = subprocess.Popen(
                 cmd,
                 stdin=subprocess.PIPE,
@@ -240,7 +245,8 @@ class ClaudeCodeBackend:
                 stderr=subprocess.PIPE,
                 text=True,
                 encoding="utf-8",  # Explicit UTF-8 for Windows compatibility
-                cwd=cwd
+                cwd=cwd,
+                **kwargs
             )
 
             # Write prompt to stdin and close
