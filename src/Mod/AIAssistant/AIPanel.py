@@ -79,6 +79,7 @@ class AIAssistantDockWidget(QtWidgets.QDockWidget):
         self.pending_input = None
         self._last_code = ""
         self._last_screenshot = None  # Base64 PNG of last viewport capture
+        self._last_execution_warnings = []  # Warnings from last code execution
 
         # Plan mode state
         self._pending_plan = None  # Approved plan text for code generation
@@ -572,6 +573,12 @@ class AIAssistantDockWidget(QtWidgets.QDockWidget):
         if self.context_action.isChecked():
             objects_filter = self._context_widget.get_context_objects()
             context = ContextBuilder.build_context(objects_filter=objects_filter)
+
+        # Append warnings from last execution to context (agentic learning)
+        if self._last_execution_warnings:
+            warnings_text = "\n".join(self._last_execution_warnings)
+            context += f"\n\n### Warnings from Previous Execution:\n```\n{warnings_text}\n```\nPlease learn from these warnings and avoid using deprecated APIs."
+            self._last_execution_warnings = []  # Clear after including in context
 
         # Capture object snapshot for future context enrichment
         snapshot_id, snapshot_path = SnapshotManager.save_snapshot()
@@ -1160,7 +1167,9 @@ Read source.py to understand what went wrong, then fix it."""
                         pass
 
             # Execute the new source.py (on clean document)
-            success, message = CodeExecutor.execute(source_content)
+            success, message, warnings = CodeExecutor.execute(source_content)
+            if warnings:
+                self._last_execution_warnings = warnings
 
             # Capture state after
             after_snapshot = SnapshotManager.capture_current_state()
@@ -1193,7 +1202,7 @@ Read source.py to understand what went wrong, then fix it."""
                 restored_source = SourceManager.read_source()
                 if restored_source:
                     FreeCAD.Console.PrintMessage("AIAssistant: Re-executing backup to restore objects\n")
-                    CodeExecutor.execute(restored_source)
+                    CodeExecutor.execute(restored_source)  # Ignore return values for restore
 
                 self._chat.add_error_message(f"Execution error: {message}")
         else:
@@ -1258,6 +1267,12 @@ Read source.py to understand what went wrong, then fix it."""
         if self.context_action.isChecked():
             objects_filter = self._context_widget.get_context_objects()
             context = ContextBuilder.build_context(objects_filter=objects_filter)
+
+        # Append warnings from last execution to context (agentic learning)
+        if self._last_execution_warnings:
+            warnings_text = "\n".join(self._last_execution_warnings)
+            context += f"\n\n### Warnings from Previous Execution:\n```\n{warnings_text}\n```\nPlease learn from these warnings and avoid using deprecated APIs."
+            self._last_execution_warnings = []  # Clear after including in context
 
         # Get conversation history
         conversation = self._chat.get_conversation_history()
@@ -1332,7 +1347,9 @@ Return ONLY the Python code in a ```python code block."""
         before_snapshot = SnapshotManager.capture_current_state()
 
         # Execute the code
-        success, message = CodeExecutor.execute(code)
+        success, message, warnings = CodeExecutor.execute(code)
+        if warnings:
+            self._last_execution_warnings = warnings
         ActivityLogger.log_code_executed(success, message, code=code)
 
         # Capture document state AFTER execution
