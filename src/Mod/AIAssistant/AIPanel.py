@@ -2008,18 +2008,17 @@ If there are PROBLEMS, explain briefly what's wrong and edit source.py to fix th
             return
 
         # Build review prompt
-        review_prompt = """I just generated code that creates a 3D model. Please review the screenshots showing the result from multiple angles.
+        review_prompt = """Review these screenshots of the 3D model I just created. Check all angles carefully.
 
-IMPORTANT: Look carefully at the geometry from ALL angles. Common issues to check:
-- Objects not connected/aligned properly
-- Missing features or incomplete geometry
-- Objects floating in wrong positions
-- Obvious visual errors or glitches
-- Shape doesn't match the user's request
+Look for:
+- Geometry issues (disconnected, misaligned, floating objects)
+- Missing or incomplete features
+- Visual errors or glitches
+- Does it match what the user asked for?
 
-If the result looks CORRECT and matches the original request, respond with just: "LOOKS_GOOD"
+If it looks correct: Start your response with [APPROVED] then describe what you see naturally.
 
-If there are PROBLEMS, explain briefly what's wrong and edit source.py to fix them. Focus on the most obvious issues first."""
+If there are problems: Explain what's wrong and edit source.py to fix them."""
 
         # Send to Claude with sandbox screenshots
         self._sandbox_review_worker = LLMWorker(
@@ -2034,11 +2033,10 @@ If there are PROBLEMS, explain briefly what's wrong and edit source.py to fix th
     def _on_sandbox_review_response(self, response: str):
         """Handle response from sandbox self-review.
 
-        If Claude says LOOKS_GOOD, show preview to user.
+        If Claude approves ([APPROVED] marker), show preview to user.
         If Claude edited source.py, re-execute in sandbox and loop.
         """
         self._chat.hide_typing()
-        self._sandbox_review_response = response
 
         # Log the review
         ActivityLogger.log_llm_response(
@@ -2046,10 +2044,16 @@ If there are PROBLEMS, explain briefly what's wrong and edit source.py to fix th
             session_id=self.session_manager.get_current_session_id()
         )
 
-        # Check if Claude is satisfied
-        if "LOOKS_GOOD" in response.upper():
+        # Check if Claude approved (look for [APPROVED] marker)
+        is_approved = "[APPROVED]" in response.upper()
+
+        # Strip the marker from displayed response
+        display_response = response.replace("[APPROVED]", "").replace("[approved]", "").strip()
+        self._sandbox_review_response = display_response
+
+        if is_approved:
             FreeCAD.Console.PrintMessage(
-                "AIAssistant: Sandbox self-review passed, showing preview to user\n"
+                "AIAssistant: Self-review passed, showing preview to user\n"
             )
             self._finalize_sandbox_preview()
             return
