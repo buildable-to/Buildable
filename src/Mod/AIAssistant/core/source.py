@@ -449,7 +449,7 @@ def backup_source() -> bool:
         return False
 
     try:
-        _source_backup = source_path.read_text()
+        _source_backup = source_path.read_text(encoding="utf-8")
         FreeCAD.Console.PrintMessage("SourceManager: Backed up source.py\n")
         return True
     except Exception as e:
@@ -478,7 +478,7 @@ def restore_source() -> bool:
         return False
 
     try:
-        source_path.write_text(_source_backup)
+        source_path.write_text(_source_backup, encoding="utf-8")
         FreeCAD.Console.PrintMessage("SourceManager: Restored source.py from backup\n")
         _source_backup = None
         return True
