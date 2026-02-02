@@ -38,18 +38,21 @@ class LLMWorker(QtCore.QThread):
     finished = QtCore.Signal(str)
     error = QtCore.Signal(str)
 
-    def __init__(self, llm, user_input, context, conversation, screenshot=None):
+    def __init__(self, llm, user_input, context, conversation, screenshot=None,
+                 multi_angle_screenshots=None):
         super().__init__()
         self.llm = llm
         self.user_input = user_input
         self.context = context
         self.conversation = conversation
         self.screenshot = screenshot
+        self.multi_angle_screenshots = multi_angle_screenshots
 
     def run(self):
         try:
             response = self.llm.chat(
-                self.user_input, self.context, self.conversation, self.screenshot
+                self.user_input, self.context, self.conversation, self.screenshot,
+                self.multi_angle_screenshots
             )
             self.finished.emit(response)
         except Exception as e:
@@ -81,6 +84,13 @@ class AIAssistantDockWidget(QtWidgets.QDockWidget):
         self._last_screenshot = None  # Base64 PNG of last viewport capture
         self._last_execution_warnings = []  # Warnings from last code execution
         self._last_execution_error = None  # Error message from last failed execution
+        self._last_multi_angle_screenshots = []  # Paths to multi-angle screenshots
+
+        # Self-review state
+        self._self_review_worker = None  # Worker for self-review requests
+        self._self_review_attempt = 0  # Current self-review attempt
+        self._self_review_change_set = None  # Pending change set to show after review
+        self._max_self_review_attempts = 2  # Max auto-fix iterations in self-review
 
         # Plan mode state
         self._pending_plan = None  # Approved plan text for code generation
@@ -263,6 +273,13 @@ class AIAssistantDockWidget(QtWidgets.QDockWidget):
         self.auto_accept_action.setCheckable(True)
         self.auto_accept_action.setChecked(False)
 
+        self.self_review_action = menu.addAction("Self-review before showing")
+        self.self_review_action.setCheckable(True)
+        self.self_review_action.setChecked(True)
+        self.self_review_action.setToolTip(
+            "Claude reviews the result and can fix issues before showing to you"
+        )
+
         self.plan_mode_action = menu.addAction("Plan mode (2-phase)")
         self.plan_mode_action.setCheckable(True)
         self.plan_mode_action.setChecked(False)
@@ -325,7 +342,7 @@ class AIAssistantDockWidget(QtWidgets.QDockWidget):
         # Save settings checkboxes state
         settings_state = {}
         for attr in ("context_action", "autorun_action", "auto_accept_action",
-                      "plan_mode_action", "streaming_action", "debug_action"):
+                      "self_review_action", "plan_mode_action", "streaming_action", "debug_action"):
             try:
                 settings_state[attr] = getattr(self, attr).isChecked()
             except Exception:
@@ -619,12 +636,14 @@ Output ONLY a plan in this format:
 Do NOT write any code. Only output the numbered plan steps."""
 
             self.worker = LLMWorker(
-                self.llm, plan_prompt, context, conversation, self._last_screenshot
+                self.llm, plan_prompt, context, conversation, self._last_screenshot,
+                self._last_multi_angle_screenshots
             )
         else:
             # Normal mode: request code directly
             self.worker = LLMWorker(
-                self.llm, user_input, context, conversation, self._last_screenshot
+                self.llm, user_input, context, conversation, self._last_screenshot,
+                self._last_multi_angle_screenshots
             )
 
         self.worker.finished.connect(self._on_response)
@@ -1193,17 +1212,19 @@ Read source.py to understand what went wrong, then fix it."""
                 # Capture screenshot for LLM feedback
                 self._last_screenshot = self._capture_screenshot()
 
-                # Detect and show changes
+                # Capture multi-angle screenshots for self-review and debugging
+                self._capture_multi_angle_screenshots()
+
+                # Detect changes
                 change_set = ChangeDetector.detect_changes(
                     before_snapshot, after_snapshot, code=""
                 )
                 change_set.execution_success = success
                 change_set.execution_message = message
 
-                if change_set.is_empty():
-                    self._chat.add_system_message("Source.py executed successfully (no object changes)")
-                else:
-                    self._chat.add_change_message(change_set)
+                # Run self-review (will show result when done)
+                self._self_review_attempt = 0  # Reset for new operation
+                self._run_self_review(change_set)
             else:
                 # Execution failed - restore backup AND re-execute to restore objects
                 FreeCAD.Console.PrintError(f"AIAssistant: Source execution failed: {message}\n")
@@ -1307,7 +1328,8 @@ Return ONLY the Python code in a ```python code block."""
 
         # Start background worker for code generation
         self._plan_worker = LLMWorker(
-            self.llm, code_prompt, context, conversation, self._last_screenshot
+            self.llm, code_prompt, context, conversation, self._last_screenshot,
+            self._last_multi_angle_screenshots
         )
         self._plan_worker.finished.connect(self._on_plan_code_response)
         self._plan_worker.error.connect(self._on_error)
@@ -1386,14 +1408,15 @@ Return ONLY the Python code in a ```python code block."""
             # Capture screenshot for LLM feedback
             self._last_screenshot = self._capture_screenshot()
 
+            # Capture multi-angle screenshots for self-review and debugging
+            self._capture_multi_angle_screenshots()
+
             # Save code to source file (for regeneration and context)
             SourceManager.append_code(code)
 
-            if change_set.is_empty():
-                self._chat.add_system_message("Code executed successfully (no object changes)")
-            else:
-                # Display changes with ChangeWidget
-                self._chat.add_change_message(change_set)
+            # Run self-review (will show result when done)
+            self._self_review_attempt = 0  # Reset for new operation
+            self._run_self_review(change_set)
         else:
             self._last_execution_error = message  # Store for agentic learning
             self._chat.add_error_message(f"Execution error: {message}")
@@ -1557,6 +1580,9 @@ Return ONLY the Python code in a ```python code block."""
             view.viewIsometric()
             view.fitAll()
 
+            # Force GUI update to ensure view is rendered
+            FreeCADGui.updateGui()
+
             # Save to temp file (use NamedTemporaryFile for security)
             with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp_file:
                 tmp_path = tmp_file.name
@@ -1572,6 +1598,260 @@ Return ONLY the Python code in a ```python code block."""
         except Exception as e:
             FreeCAD.Console.PrintWarning(f"AIAssistant: Screenshot capture failed: {e}\n")
             return None
+
+    def _run_self_review(self, change_set):
+        """Run self-review loop - ask Claude to verify the result looks correct.
+
+        If self-review is enabled and Claude finds issues, it will edit source.py
+        and the code will be re-executed. This continues until Claude is satisfied
+        or max attempts are reached.
+
+        Args:
+            change_set: The ChangeSet to show after review (if approved)
+        """
+        # Skip if disabled
+        if not self.self_review_action.isChecked():
+            self._show_change_result(change_set)
+            return
+
+        # Skip if no screenshots
+        if not self._last_multi_angle_screenshots:
+            FreeCAD.Console.PrintWarning(
+                "AIAssistant: No screenshots for self-review, skipping\n"
+            )
+            self._show_change_result(change_set)
+            return
+
+        # Check attempt limit
+        self._self_review_attempt += 1
+        if self._self_review_attempt > self._max_self_review_attempts:
+            FreeCAD.Console.PrintMessage(
+                f"AIAssistant: Max self-review attempts ({self._max_self_review_attempts}) reached, showing result\n"
+            )
+            self._self_review_attempt = 0
+            self._show_change_result(change_set)
+            return
+
+        # Store change set for later
+        self._self_review_change_set = change_set
+
+        FreeCAD.Console.PrintMessage(
+            f"AIAssistant: Running self-review (attempt {self._self_review_attempt})...\n"
+        )
+        self._chat.show_typing()
+
+        # Build review prompt
+        review_prompt = """I just executed code that modified the 3D model. Please review the screenshots showing the result from multiple angles.
+
+IMPORTANT: Look carefully at the geometry from ALL angles. Common issues to check:
+- Objects not connected/aligned properly
+- Missing features or incomplete geometry
+- Objects floating in wrong positions
+- Obvious visual errors or glitches
+
+If the result looks CORRECT and matches my original request, respond with just: "LOOKS_GOOD"
+
+If there are PROBLEMS, explain briefly what's wrong and edit source.py to fix them. Focus on the most obvious issues first."""
+
+        # Use LLMWorker with screenshots
+        self._self_review_worker = LLMWorker(
+            self.llm, review_prompt, "", [],  # No context/history needed
+            screenshot=None,  # Don't need single screenshot
+            multi_angle_screenshots=self._last_multi_angle_screenshots
+        )
+        self._self_review_worker.finished.connect(self._on_self_review_response)
+        self._self_review_worker.error.connect(self._on_self_review_error)
+        self._self_review_worker.start()
+
+    def _on_self_review_response(self, response: str):
+        """Handle response from self-review request.
+
+        Args:
+            response: Claude's review response
+        """
+        self._chat.hide_typing()
+
+        # Log the self-review
+        ActivityLogger.log_llm_response(f"[Self-Review] {response}", session_id=self.session_manager.get_current_session_id())
+
+        # Check if Claude is satisfied
+        if "LOOKS_GOOD" in response.upper():
+            FreeCAD.Console.PrintMessage("AIAssistant: Self-review passed, showing result\n")
+            self._self_review_attempt = 0
+            self._show_change_result(self._self_review_change_set)
+            self._self_review_change_set = None
+            return
+
+        # Claude found issues - check if it edited source.py
+        if getattr(self.llm, 'source_was_edited', False):
+            FreeCAD.Console.PrintMessage(
+                f"AIAssistant: Self-review found issues, Claude edited source.py. Re-executing...\n"
+            )
+
+            # Re-execute source.py
+            source_content = SourceManager.read_source()
+
+            # Clear document for clean re-execution
+            doc = FreeCAD.ActiveDocument
+            if doc:
+                objects_to_remove = [
+                    obj.Name for obj in doc.Objects
+                    if obj.TypeId not in ("App::Origin", "App::Plane", "App::Line")
+                ]
+                for obj_name in objects_to_remove:
+                    try:
+                        doc.removeObject(obj_name)
+                    except Exception:
+                        pass
+
+            # Execute
+            success, message, warnings = CodeExecutor.execute(source_content)
+            if warnings:
+                self._last_execution_warnings.extend(warnings)
+
+            if success:
+                # Capture new screenshots
+                self._capture_multi_angle_screenshots()
+
+                # Create new change set
+                after_snapshot = SnapshotManager.capture_current_state()
+                change_set = ChangeDetector.detect_changes({}, after_snapshot, code="")
+                change_set.execution_success = True
+                change_set.execution_message = "Re-executed after self-review fix"
+
+                # Run self-review again
+                self._run_self_review(change_set)
+            else:
+                # Execution failed after fix - show error
+                self._self_review_attempt = 0
+                self._last_execution_error = message
+                self._chat.add_error_message(f"Self-review fix failed: {message}")
+        else:
+            # Claude didn't edit source.py - show original result with Claude's feedback
+            FreeCAD.Console.PrintMessage(
+                "AIAssistant: Self-review found issues but Claude didn't fix. Showing result with feedback.\n"
+            )
+            self._self_review_attempt = 0
+            self._show_change_result(self._self_review_change_set)
+            # Add Claude's feedback as a follow-up message
+            self._chat.add_system_message(f"Self-review note: {response[:200]}...")
+            self._self_review_change_set = None
+
+    def _on_self_review_error(self, error_msg: str):
+        """Handle error from self-review request."""
+        FreeCAD.Console.PrintWarning(f"AIAssistant: Self-review failed: {error_msg}\n")
+        self._chat.hide_typing()
+        self._self_review_attempt = 0
+        # Fall back to showing result without review
+        if self._self_review_change_set:
+            self._show_change_result(self._self_review_change_set)
+            self._self_review_change_set = None
+
+    def _show_change_result(self, change_set):
+        """Show the change result to the user.
+
+        Args:
+            change_set: The ChangeSet to display
+        """
+        if change_set.is_empty():
+            self._chat.add_system_message("Code executed successfully (no object changes)")
+        else:
+            self._chat.add_change_message(change_set)
+
+    def _capture_multi_angle_screenshots(self) -> list:
+        """Capture screenshots from multiple angles and save to project folder.
+
+        Captures isometric, front, right, and top views. Saves to project
+        screenshots/ folder for debugging and returns paths for Claude context.
+
+        The view is changed temporarily and restored after capture, so the user
+        doesn't see the viewport moving around.
+
+        Returns:
+            List of file paths to saved screenshots, or empty list on failure
+        """
+        from datetime import datetime
+
+        results = []
+
+        try:
+            if not FreeCADGui.ActiveDocument:
+                return []
+
+            view = FreeCADGui.ActiveDocument.ActiveView
+            if not hasattr(view, "saveImage"):
+                return []
+
+            # Views to capture: (method_name, display_name)
+            views = [
+                ("viewIsometric", "isometric"),
+                ("viewFront", "front"),
+                ("viewRight", "right"),
+                ("viewTop", "top"),
+            ]
+
+            # Create screenshots directory in project folder
+            if not self._project_dir:
+                FreeCAD.Console.PrintWarning(
+                    "AIAssistant: No project directory, skipping multi-angle screenshots\n"
+                )
+                return []
+
+            screenshots_dir = Path(self._project_dir) / "screenshots"
+            screenshots_dir.mkdir(parents=True, exist_ok=True)
+
+            # Generate timestamp for filenames
+            timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+
+            # Save current camera state to restore after screenshots
+            saved_camera = None
+            if hasattr(view, "getCamera"):
+                saved_camera = view.getCamera()
+
+            # Disable animation for instant view changes
+            if hasattr(view, "setAnimationEnabled"):
+                view.setAnimationEnabled(False)
+
+            try:
+                for method_name, display_name in views:
+                    try:
+                        # Set view orientation
+                        getattr(view, method_name)()
+                        view.fitAll()
+
+                        # Force full GUI update before capturing
+                        FreeCADGui.updateGui()
+
+                        # Save to project folder
+                        filepath = screenshots_dir / f"{timestamp}_{display_name}.png"
+                        view.saveImage(str(filepath), 800, 600)
+                        results.append(str(filepath))
+                        FreeCAD.Console.PrintMessage(
+                            f"AIAssistant: Saved {display_name} view to {filepath.name}\n"
+                        )
+
+                    except Exception as e:
+                        FreeCAD.Console.PrintWarning(
+                            f"AIAssistant: Failed to capture {display_name} view: {e}\n"
+                        )
+            finally:
+                # Restore original camera state
+                if saved_camera and hasattr(view, "setCamera"):
+                    view.setCamera(saved_camera)
+                    FreeCADGui.updateGui()
+
+                # Re-enable animation
+                if hasattr(view, "setAnimationEnabled"):
+                    view.setAnimationEnabled(True)
+
+            # Store for context
+            self._last_multi_angle_screenshots = results
+
+            return results
+
+        except Exception as e:
+            FreeCAD.Console.PrintWarning(f"AIAssistant: Multi-angle capture failed: {e}\n")
+            return []
 
     def closeEvent(self, event):
         """Clean up when panel is closed."""

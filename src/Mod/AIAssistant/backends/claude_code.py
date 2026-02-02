@@ -159,6 +159,7 @@ class ClaudeCodeBackend:
         context: str = "",
         history: list = None,
         screenshot: str = None,
+        multi_angle_screenshots: list = None,
     ) -> str:
         """Send message to Claude Code CLI and get response.
 
@@ -167,6 +168,7 @@ class ClaudeCodeBackend:
             context: Optional document context string (passed in prompt if no CLAUDE.md)
             history: Optional conversation history (not used - Claude Code manages sessions)
             screenshot: Optional base64-encoded PNG screenshot (saved to temp file)
+            multi_angle_screenshots: Optional list of file paths to multi-angle screenshots
 
         Returns:
             Generated response (Python code or text answer)
@@ -181,7 +183,7 @@ class ClaudeCodeBackend:
             screenshot_path = self._save_screenshot(screenshot)
 
         # Build the prompt
-        prompt = self._build_prompt(user_message, context, screenshot_path)
+        prompt = self._build_prompt(user_message, context, screenshot_path, multi_angle_screenshots)
 
         # Build command - use stream-json for tool visibility
         # Note: stream-json requires --verbose when used with -p (print mode)
@@ -354,7 +356,8 @@ class ClaudeCodeBackend:
             FreeCAD.Console.PrintError(f"AIAssistant: Claude Code error: {e}\n")
             return f"# Error: {e}"
 
-    def _build_prompt(self, message: str, context: str, screenshot_path: str = None) -> str:
+    def _build_prompt(self, message: str, context: str, screenshot_path: str = None,
+                       multi_angle_screenshots: list = None) -> str:
         """Build the prompt for Claude Code.
 
         Claude runs from project directory and can edit source.py directly.
@@ -382,6 +385,17 @@ class ClaudeCodeBackend:
         # Add screenshot reference if provided
         if screenshot_path:
             parts.append(f"[Screenshot of current viewport: {screenshot_path}]\n")
+
+        # Add multi-angle screenshots from previous execution (for self-review)
+        if multi_angle_screenshots:
+            parts.append("### Screenshots from Previous Execution (multiple angles):")
+            parts.append("Review these to understand how the current design looks from different angles.")
+            for path in multi_angle_screenshots:
+                # Extract view name from filename (e.g., "2026-01-16_10-30-00_isometric.png")
+                filename = Path(path).name
+                view_name = filename.rsplit("_", 1)[-1].replace(".png", "") if "_" in filename else "view"
+                parts.append(f"- {view_name}: {path}")
+            parts.append("")
 
         parts.append(message)
 
