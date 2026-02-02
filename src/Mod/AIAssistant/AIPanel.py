@@ -1860,7 +1860,8 @@ If there are PROBLEMS, explain briefly what's wrong and edit source.py to fix th
         """Capture multi-angle screenshots from sandbox document.
 
         Temporarily switches to sandbox document, captures screenshots,
-        then restores the original active document.
+        then restores the original active document. Screenshots are named
+        latest_{view}.png and overwrite previous captures.
 
         Args:
             sandbox_doc_name: Name of the sandbox document to capture from
@@ -1868,8 +1869,6 @@ If there are PROBLEMS, explain briefly what's wrong and edit source.py to fix th
         Returns:
             List of file paths to saved screenshots
         """
-        from datetime import datetime
-
         results = []
 
         # Save current state
@@ -1901,12 +1900,12 @@ If there are PROBLEMS, explain briefly what's wrong and edit source.py to fix th
             if not hasattr(view, "saveImage"):
                 return []
 
-            # Views to capture
+            # Views to capture: (method_name, view_name)
             views = [
-                ("viewIsometric", "sandbox_isometric"),
-                ("viewFront", "sandbox_front"),
-                ("viewRight", "sandbox_right"),
-                ("viewTop", "sandbox_top"),
+                ("viewIsometric", "isometric"),
+                ("viewFront", "front"),
+                ("viewRight", "right"),
+                ("viewTop", "top"),
             ]
 
             # Create screenshots directory
@@ -1915,7 +1914,6 @@ If there are PROBLEMS, explain briefly what's wrong and edit source.py to fix th
 
             screenshots_dir = Path(self._project_dir) / "screenshots"
             screenshots_dir.mkdir(parents=True, exist_ok=True)
-            timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
 
             # Save camera state
             saved_camera = None
@@ -1926,21 +1924,21 @@ If there are PROBLEMS, explain briefly what's wrong and edit source.py to fix th
                 view.setAnimationEnabled(False)
 
             try:
-                for method_name, display_name in views:
+                for method_name, view_name in views:
                     try:
                         getattr(view, method_name)()
                         view.fitAll()
                         FreeCADGui.updateGui()
 
-                        filepath = screenshots_dir / f"{timestamp}_{display_name}.png"
+                        filepath = screenshots_dir / f"latest_{view_name}.png"
                         view.saveImage(str(filepath), 800, 600)
                         results.append(str(filepath))
                         FreeCAD.Console.PrintMessage(
-                            f"AIAssistant: Saved sandbox {display_name} to {filepath.name}\n"
+                            f"AIAssistant: Saved {filepath.name}\n"
                         )
                     except Exception as e:
                         FreeCAD.Console.PrintWarning(
-                            f"AIAssistant: Failed sandbox capture {display_name}: {e}\n"
+                            f"AIAssistant: Failed capture {view_name}: {e}\n"
                         )
             finally:
                 if saved_camera and hasattr(view, "setCamera"):
