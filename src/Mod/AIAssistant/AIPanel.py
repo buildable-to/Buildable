@@ -80,6 +80,7 @@ class AIAssistantDockWidget(QtWidgets.QDockWidget):
         self._last_code = ""
         self._last_screenshot = None  # Base64 PNG of last viewport capture
         self._last_execution_warnings = []  # Warnings from last code execution
+        self._last_execution_error = None  # Error message from last failed execution
 
         # Plan mode state
         self._pending_plan = None  # Approved plan text for code generation
@@ -579,6 +580,11 @@ class AIAssistantDockWidget(QtWidgets.QDockWidget):
             warnings_text = "\n".join(self._last_execution_warnings)
             context += f"\n\n### Warnings from Previous Execution:\n```\n{warnings_text}\n```\nPlease learn from these warnings and avoid using deprecated APIs."
             self._last_execution_warnings = []  # Clear after including in context
+
+        # Append error from last execution to context (agentic learning)
+        if self._last_execution_error:
+            context += f"\n\n### Error from Previous Execution:\n```\n{self._last_execution_error}\n```\nPlease fix this error in your next code generation."
+            self._last_execution_error = None  # Clear after including in context
 
         # Capture object snapshot for future context enrichment
         snapshot_id, snapshot_path = SnapshotManager.save_snapshot()
@@ -1204,6 +1210,7 @@ Read source.py to understand what went wrong, then fix it."""
                     FreeCAD.Console.PrintMessage("AIAssistant: Re-executing backup to restore objects\n")
                     CodeExecutor.execute(restored_source)  # Ignore return values for restore
 
+                self._last_execution_error = message  # Store for agentic learning
                 self._chat.add_error_message(f"Execution error: {message}")
         else:
             # Old-style patch flow: execute the code and show changes
@@ -1273,6 +1280,11 @@ Read source.py to understand what went wrong, then fix it."""
             warnings_text = "\n".join(self._last_execution_warnings)
             context += f"\n\n### Warnings from Previous Execution:\n```\n{warnings_text}\n```\nPlease learn from these warnings and avoid using deprecated APIs."
             self._last_execution_warnings = []  # Clear after including in context
+
+        # Append error from last execution to context (agentic learning)
+        if self._last_execution_error:
+            context += f"\n\n### Error from Previous Execution:\n```\n{self._last_execution_error}\n```\nPlease fix this error in your next code generation."
+            self._last_execution_error = None  # Clear after including in context
 
         # Get conversation history
         conversation = self._chat.get_conversation_history()
@@ -1377,6 +1389,7 @@ Return ONLY the Python code in a ```python code block."""
                 # Display changes with ChangeWidget
                 self._chat.add_change_message(change_set)
         else:
+            self._last_execution_error = message  # Store for agentic learning
             self._chat.add_error_message(f"Execution error: {message}")
 
     def _on_clear(self):
