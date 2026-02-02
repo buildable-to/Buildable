@@ -1181,7 +1181,7 @@ Read source.py to understand what went wrong, then fix it."""
             # Execute the new source.py (on clean document)
             success, message, warnings = CodeExecutor.execute(source_content)
             if warnings:
-                self._last_execution_warnings = warnings
+                self._last_execution_warnings.extend(warnings)
 
             # Capture state after
             after_snapshot = SnapshotManager.capture_current_state()
@@ -1367,7 +1367,7 @@ Return ONLY the Python code in a ```python code block."""
         # Execute the code
         success, message, warnings = CodeExecutor.execute(code)
         if warnings:
-            self._last_execution_warnings = warnings
+            self._last_execution_warnings.extend(warnings)
         ActivityLogger.log_code_executed(success, message, code=code)
 
         # Capture document state AFTER execution
