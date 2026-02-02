@@ -23,6 +23,57 @@ BLOCKED_PATTERNS = [
     "socket.",
 ]
 
+# Module-level storage for captured warnings
+_captured_warnings = []
+
+
+class WarningCapture:
+    """Context manager to capture FreeCAD console warnings during execution."""
+
+    def __init__(self):
+        self._original_warning = None
+        self._original_dev_warning = None
+        self._original_user_warning = None
+        self.warnings = []
+
+    def __enter__(self):
+        global _captured_warnings
+        _captured_warnings = []
+        self.warnings = _captured_warnings
+
+        # Store original functions
+        self._original_warning = FreeCAD.Console.PrintWarning
+        self._original_dev_warning = FreeCAD.Console.PrintDeveloperWarning
+        self._original_user_warning = FreeCAD.Console.PrintUserWarning
+
+        # Create capturing wrapper
+        def capture_warning(msg):
+            self.warnings.append(msg.rstrip('\n'))
+            self._original_warning(msg)
+
+        def capture_dev_warning(msg):
+            self.warnings.append(msg.rstrip('\n'))
+            self._original_dev_warning(msg)
+
+        def capture_user_warning(msg):
+            self.warnings.append(msg.rstrip('\n'))
+            self._original_user_warning(msg)
+
+        # Monkeypatch - this works because Python Console methods are
+        # module-level functions that can be replaced
+        FreeCAD.Console.PrintWarning = capture_warning
+        FreeCAD.Console.PrintDeveloperWarning = capture_dev_warning
+        FreeCAD.Console.PrintUserWarning = capture_user_warning
+
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        # Restore original functions
+        FreeCAD.Console.PrintWarning = self._original_warning
+        FreeCAD.Console.PrintDeveloperWarning = self._original_dev_warning
+        FreeCAD.Console.PrintUserWarning = self._original_user_warning
+        return False
+
 
 def execute(code: str) -> tuple:
     """
@@ -32,50 +83,58 @@ def execute(code: str) -> tuple:
         code: Python code string to execute
 
     Returns:
-        Tuple of (success: bool, message: str)
+        Tuple of (success: bool, message: str, warnings: list)
+        The warnings list contains any deprecation or other warnings captured during execution.
     """
     # Clean the code
     code = _clean_code(code)
 
     if not code.strip():
-        return False, "No code to execute"
+        return False, "No code to execute", []
 
     # Safety check
     safety_result = _safety_check(code)
     if safety_result:
-        return False, safety_result
+        return False, safety_result, []
 
     # Build execution namespace with FreeCAD modules
     namespace = _build_namespace()
 
     try:
-        # Execute the code
-        exec(code, namespace)
+        # Execute with warning capture
+        with WarningCapture() as capture:
+            # Execute the code
+            exec(code, namespace)
 
-        # Recompute document
-        if FreeCAD.ActiveDocument:
-            FreeCAD.ActiveDocument.recompute()
+            # Recompute document
+            if FreeCAD.ActiveDocument:
+                FreeCAD.ActiveDocument.recompute()
 
-        # Fit view to show results
-        try:
-            if FreeCADGui.ActiveDocument and FreeCADGui.ActiveDocument.ActiveView:
-                FreeCADGui.ActiveDocument.ActiveView.fitAll()
-        except Exception:
-            pass
+            # Fit view to show results
+            try:
+                if FreeCADGui.ActiveDocument and FreeCADGui.ActiveDocument.ActiveView:
+                    FreeCADGui.ActiveDocument.ActiveView.fitAll()
+            except Exception:
+                pass
 
-        return True, "Code executed successfully"
+        return True, "Code executed successfully", capture.warnings
 
     except SyntaxError as e:
-        return False, f"Syntax error at line {e.lineno}: {e.msg}"
+        return False, f"Syntax error at line {e.lineno}: {e.msg}", []
 
     except NameError as e:
-        return False, f"Name error: {e}"
+        return False, f"Name error: {e}", []
 
     except AttributeError as e:
-        return False, f"Attribute error: {e}"
+        return False, f"Attribute error: {e}", []
 
     except Exception as e:
-        return False, f"Execution error: {type(e).__name__}: {e}"
+        return False, f"Execution error: {type(e).__name__}: {e}", []
+
+
+def get_last_warnings() -> list:
+    """Get warnings captured from the last execution."""
+    return _captured_warnings.copy()
 
 
 def _clean_code(code: str) -> str:
