@@ -297,7 +297,7 @@ class MessageCard(QtWidgets.QFrame):
         layout.addWidget(self._text_label)
 
     def _setup_assistant_message(self):
-        """Assistant message: card with subtle border."""
+        """Assistant message: card with subtle border and shadow."""
         self.setStyleSheet(f"""
             QFrame {{
                 background-color: {Theme.COLORS['assistant_card_bg']};
@@ -305,6 +305,10 @@ class MessageCard(QtWidgets.QFrame):
                 border-radius: {Theme.RADIUS['lg']};
             }}
         """)
+
+        # Add subtle drop shadow for depth
+        shadow = Theme.get_drop_shadow("sm")
+        self.setGraphicsEffect(shadow)
 
         self._content_layout = QtWidgets.QVBoxLayout(self)
         self._content_layout.setContentsMargins(16, 14, 16, 14)

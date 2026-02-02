@@ -153,6 +153,10 @@ class ClaudeCodeBackend:
         # Track if source.py was edited (for direct source editing flow)
         self.source_was_edited: bool = False
 
+        # Callback for real-time tool call updates (for progress indicator)
+        # Signature: on_tool_call(tool_name: str, tool_input: dict)
+        self.on_tool_call = None
+
     def chat(
         self,
         user_message: str,
@@ -282,6 +286,9 @@ class ClaudeCodeBackend:
                             FreeCAD.Console.PrintMessage(
                                 f"AIAssistant: Tool call - {detail}\n"
                             )
+                            # Fire callback for progress indicator
+                            if self.on_tool_call:
+                                self.on_tool_call(tool_name, tool_input)
 
                 # Handle final result
                 elif event_type == "result":

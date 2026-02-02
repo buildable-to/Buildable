@@ -10,7 +10,8 @@ FreeCAD.Console.PrintMessage("AIAssistant: ChatWidget.py loaded (v3 modern desig
 from typing import Union, List, Dict
 from PySide6 import QtWidgets, QtCore, QtGui
 from .message_model import ChatMessageModel, ChatMessage, MessageRole
-from .message_delegate import MessageCard, ThinkingIndicator
+from .message_delegate import MessageCard
+from .progress_indicator import PhasedProgressIndicator
 from ..core.changes import ChangeSet
 from .change import ChangeWidget
 from .preview import PreviewWidget
@@ -117,24 +118,36 @@ class ChatListWidget(QtWidgets.QScrollArea):
                 widget.update_displayed_text(text)
             QtCore.QTimer.singleShot(50, self._scroll_to_bottom)
 
-    def show_typing_indicator(self):
-        """Show the typing indicator."""
+    def show_typing_indicator(self, show_review_phase: bool = True):
+        """Show the phased progress indicator."""
         if self._typing_indicator is None:
-            self._typing_indicator = ThinkingIndicator()
+            self._typing_indicator = PhasedProgressIndicator(show_review_phase=show_review_phase)
             self._layout.insertWidget(self._layout.count() - 1, self._typing_indicator)
+        else:
+            self._typing_indicator.set_review_phase_visible(show_review_phase)
 
+        self._typing_indicator.reset()
         self._typing_indicator.show()
-        self._typing_indicator.start()
         QtCore.QTimer.singleShot(50, self._scroll_to_bottom)
 
     def hide_typing_indicator(self):
-        """Hide the typing indicator."""
+        """Hide the phased progress indicator."""
         if self._typing_indicator:
-            self._typing_indicator.stop()
             self._typing_indicator.hide()
             self._layout.removeWidget(self._typing_indicator)
             self._typing_indicator.deleteLater()
             self._typing_indicator = None
+
+    def update_progress_phase(self, tool_name: str, tool_input: dict):
+        """Update progress indicator based on tool call."""
+        if self._typing_indicator:
+            self._typing_indicator.update_from_tool(tool_name, tool_input)
+            QtCore.QTimer.singleShot(50, self._scroll_to_bottom)
+
+    def set_progress_reviewing(self):
+        """Set progress indicator to reviewing phase."""
+        if self._typing_indicator:
+            self._typing_indicator.set_reviewing()
 
     def clear(self):
         """Clear all messages."""
@@ -605,13 +618,21 @@ class ChatWidget(QtWidgets.QWidget):
         elif role == MessageRole.ERROR:
             self.add_error_message(text)
 
-    def show_typing(self):
+    def show_typing(self, show_review_phase: bool = True):
         """Show typing indicator."""
-        self._chat_list.show_typing_indicator()
+        self._chat_list.show_typing_indicator(show_review_phase=show_review_phase)
 
     def hide_typing(self):
         """Hide typing indicator."""
         self._chat_list.hide_typing_indicator()
+
+    def update_progress_phase(self, tool_name: str, tool_input: dict):
+        """Update progress indicator based on tool call."""
+        self._chat_list.update_progress_phase(tool_name, tool_input)
+
+    def set_progress_reviewing(self):
+        """Set progress indicator to reviewing phase."""
+        self._chat_list.set_progress_reviewing()
 
     def set_input_enabled(self, enabled: bool):
         """Enable/disable input."""

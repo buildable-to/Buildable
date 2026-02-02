@@ -3,7 +3,8 @@
 
 from .chat import ChatWidget, ChatListWidget, StreamingController
 from .message_model import CodeBlock, ChatMessage, MessageRole, ChatMessageModel
-from .message_delegate import DebugInfoWidget, MessageCard, ThinkingIndicator
+from .message_delegate import DebugInfoWidget, MessageCard
+from .progress_indicator import PhasedProgressIndicator, Phase, PhaseState, ThinkingIndicator
 from .code_block import CodeBlockWidget, InlineCodeLabel
 from .syntax import PythonHighlighter, MultilineStringHighlighter
 from .change import ChangeItemWidget, ChangeWidget, ChangesSummaryWidget
@@ -26,7 +27,11 @@ __all__ = [
     # message_delegate
     "DebugInfoWidget",
     "MessageCard",
-    "ThinkingIndicator",
+    # progress_indicator
+    "PhasedProgressIndicator",
+    "Phase",
+    "PhaseState",
+    "ThinkingIndicator",  # Backwards compatibility alias
     # code_block
     "CodeBlockWidget",
     "InlineCodeLabel",

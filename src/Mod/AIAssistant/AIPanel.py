@@ -37,6 +37,7 @@ class LLMWorker(QtCore.QThread):
     """Background worker for LLM API calls."""
     finished = QtCore.Signal(str)
     error = QtCore.Signal(str)
+    tool_call = QtCore.Signal(str, dict)  # For progress indicator updates
 
     def __init__(self, llm, user_input, context, conversation, screenshot=None,
                  multi_angle_screenshots=None):
@@ -50,6 +51,11 @@ class LLMWorker(QtCore.QThread):
 
     def run(self):
         try:
+            # Set up callback to emit tool_call signal
+            def on_tool_call(tool_name, tool_input):
+                self.tool_call.emit(tool_name, tool_input)
+            self.llm.on_tool_call = on_tool_call
+
             response = self.llm.chat(
                 self.user_input, self.context, self.conversation, self.screenshot,
                 self.multi_angle_screenshots
@@ -57,6 +63,9 @@ class LLMWorker(QtCore.QThread):
             self.finished.emit(response)
         except Exception as e:
             self.error.emit(str(e))
+        finally:
+            # Clean up callback
+            self.llm.on_tool_call = None
 
 
 class AIAssistantDockWidget(QtWidgets.QDockWidget):
@@ -578,8 +587,8 @@ class AIAssistantDockWidget(QtWidgets.QDockWidget):
         # Log message sent
         ActivityLogger.log_message_sent(user_input, session_id=self.session_manager.get_current_session_id())
 
-        # Show typing indicator
-        self._chat.show_typing()
+        # Show typing indicator (show review phase only if self-review is enabled)
+        self._chat.show_typing(show_review_phase=self.self_review_action.isChecked())
         self._chat.set_input_enabled(False)
 
         # Update project directory (handles document changes)
@@ -653,6 +662,7 @@ Do NOT write any code. Only output the numbered plan steps."""
 
         self.worker.finished.connect(self._on_response)
         self.worker.error.connect(self._on_error)
+        self.worker.tool_call.connect(self._on_tool_call)
         self.worker.start()
 
     def _on_response(self, response: str):
@@ -834,7 +844,7 @@ Do NOT write any code. Only output the numbered plan steps."""
             FreeCAD.Console.PrintMessage(
                 f"AIAssistant: Requesting fix from Claude (attempt {attempt + 1})...\n"
             )
-            self._chat.show_typing()
+            self._chat.show_typing(show_review_phase=self.self_review_action.isChecked())
             self._request_source_fix(new_source, exec_error, response, attempt)
         else:
             # Other diff preview failure - restore backup and show error
@@ -854,7 +864,7 @@ Do NOT write any code. Only output the numbered plan steps."""
         """
         # Keep typing indicator visible during retries
         if attempt > 1:
-            self._chat.show_typing()
+            self._chat.show_typing(show_review_phase=self.self_review_action.isChecked())
             FreeCAD.Console.PrintMessage(f"AIAssistant: Auto-fix attempt {attempt}...\n")
 
         # Try to create preview
@@ -922,7 +932,7 @@ Do NOT write any code. Only output the numbered plan steps."""
         # Ask LLM to fix the code
         FreeCAD.Console.PrintMessage(f"AIAssistant: Preview failed, requesting fix from LLM...\n")
         # Show typing indicator during auto-fix
-        self._chat.show_typing()
+        self._chat.show_typing(show_review_phase=self.self_review_action.isChecked())
         self._request_code_fix(description, code, error_msg, original_response, attempt)
 
     def _request_code_fix(self, description: str, code: str, error: str, original_response: str, attempt: int):
@@ -1161,6 +1171,10 @@ Read source.py to understand what went wrong, then fix it."""
         self._chat.add_error_message(error_msg)
         self.pending_input = None
 
+    def _on_tool_call(self, tool_name: str, tool_input: dict):
+        """Handle tool call event from LLM - update progress indicator."""
+        self._chat.update_progress_phase(tool_name, tool_input)
+
     def _on_preview_approved(self, code: str):
         """Handle user approval of preview - execute code for real."""
         FreeCAD.Console.PrintMessage("AIAssistant: Preview approved - executing code\n")
@@ -1292,7 +1306,7 @@ Read source.py to understand what went wrong, then fix it."""
             return
 
         # Show typing indicator
-        self._chat.show_typing()
+        self._chat.show_typing(show_review_phase=self.self_review_action.isChecked())
         self._chat.set_input_enabled(False)
 
         # Build context (using context widget selection)
@@ -1638,6 +1652,7 @@ Return ONLY the Python code in a ```python code block."""
             f"AIAssistant: Running self-review (attempt {self._self_review_attempt})...\n"
         )
         self._chat.show_typing()
+        self._chat.set_progress_reviewing()
 
         # Build review prompt
         review_prompt = """I just executed code that modified the 3D model. Please review the screenshots showing the result from multiple angles.
@@ -1993,6 +2008,7 @@ If there are PROBLEMS, explain briefly what's wrong and edit source.py to fix th
             f"AIAssistant: Running sandbox self-review (iteration {self._sandbox_session.iteration + 1})...\n"
         )
         self._chat.show_typing()
+        self._chat.set_progress_reviewing()
 
         # Capture screenshots from sandbox
         screenshots = self._capture_sandbox_screenshots(
@@ -2136,13 +2152,9 @@ If there are problems: Explain what's wrong and edit source.py to fix them."""
         # Check if auto-accept is enabled
         auto_approve = self.auto_accept_action.isChecked()
 
-        # Check if review feedback should be shown
-        show_review = self._context_widget.show_review_feedback()
-        description = self._sandbox_review_response if show_review else ""
-
         # Show preview widget to user (no tool_calls - self-review is internal)
         self._chat.add_preview_message(
-            description=description,
+            description=self._sandbox_review_response or "Source.py modified",
             preview_items=preview_items,
             code=self._sandbox_session.source_content,
             is_deletion=False,

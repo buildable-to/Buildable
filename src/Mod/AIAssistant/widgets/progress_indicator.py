@@ -12,7 +12,7 @@ Replaces generic skeleton bars with actual progress through:
 from enum import Enum, auto
 from PySide6 import QtWidgets, QtCore, QtGui
 
-from ..Theme import Theme
+from .. import Theme
 
 
 class Phase(Enum):
@@ -20,6 +20,7 @@ class Phase(Enum):
     READING = auto()
     UNDERSTANDING = auto()
     GENERATING = auto()
+    REVIEWING = auto()
     AWAITING_APPROVAL = auto()
 
 
@@ -43,6 +44,10 @@ PHASE_CONFIG = {
     Phase.GENERATING: {
         "label": "Generating changes",
         "description": "Writing code",
+    },
+    Phase.REVIEWING: {
+        "label": "Reviewing changes",
+        "description": "Self-review",
     },
     Phase.AWAITING_APPROVAL: {
         "label": "Awaiting approval",
@@ -209,10 +214,11 @@ class PhaseStepWidget(QtWidgets.QWidget):
 class PhasedProgressIndicator(QtWidgets.QFrame):
     """Shows workflow phases during AI processing."""
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, show_review_phase: bool = True):
         super().__init__(parent)
         self._steps: dict[Phase, PhaseStepWidget] = {}
         self._current_phase: Phase | None = None
+        self._show_review_phase = show_review_phase
         self._setup_ui()
 
     def _setup_ui(self):
@@ -226,18 +232,27 @@ class PhasedProgressIndicator(QtWidgets.QFrame):
             }}
         """)
 
-        layout = QtWidgets.QVBoxLayout(self)
-        layout.setContentsMargins(16, 14, 16, 14)
-        layout.setSpacing(2)
+        self._layout = QtWidgets.QVBoxLayout(self)
+        self._layout.setContentsMargins(16, 14, 16, 14)
+        self._layout.setSpacing(2)
 
         # Create step widgets for each phase
         for phase in Phase:
             step = PhaseStepWidget(phase)
             self._steps[phase] = step
-            layout.addWidget(step)
+            # Hide review phase if not enabled
+            if phase == Phase.REVIEWING and not self._show_review_phase:
+                step.hide()
+            self._layout.addWidget(step)
 
         # Start with first phase active
         self.set_phase(Phase.READING)
+
+    def set_review_phase_visible(self, visible: bool):
+        """Show or hide the reviewing phase."""
+        self._show_review_phase = visible
+        if Phase.REVIEWING in self._steps:
+            self._steps[Phase.REVIEWING].setVisible(visible)
 
     def set_phase(self, phase: Phase):
         """Set the current active phase, completing previous phases."""
@@ -295,6 +310,10 @@ class PhasedProgressIndicator(QtWidgets.QFrame):
             self.set_phase(target_phase)
         elif target_phase.value > self._current_phase.value:
             self.set_phase(target_phase)
+
+    def set_reviewing(self):
+        """Set to reviewing phase (called when self-review starts)."""
+        self.set_phase(Phase.REVIEWING)
 
     def set_awaiting_approval(self):
         """Set to awaiting approval phase (called when response complete)."""
