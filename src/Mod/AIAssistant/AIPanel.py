@@ -1776,7 +1776,7 @@ If there are PROBLEMS, explain briefly what's wrong and edit source.py to fix th
         """Capture screenshots from multiple angles and save to project folder.
 
         Captures isometric, front, right, and top views. Saves to project
-        screenshots/ folder for debugging and returns paths for Claude context.
+        screenshots/ folder as latest_*.png (renaming previous to before_*).
 
         The view is changed temporarily and restored after capture, so the user
         doesn't see the viewport moving around.
@@ -1784,8 +1784,6 @@ If there are PROBLEMS, explain briefly what's wrong and edit source.py to fix th
         Returns:
             List of file paths to saved screenshots, or empty list on failure
         """
-        from datetime import datetime
-
         results = []
 
         try:
@@ -1814,9 +1812,6 @@ If there are PROBLEMS, explain briefly what's wrong and edit source.py to fix th
             screenshots_dir = Path(self._project_dir) / "screenshots"
             screenshots_dir.mkdir(parents=True, exist_ok=True)
 
-            # Generate timestamp for filenames
-            timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-
             # Save current camera state to restore after screenshots
             saved_camera = None
             if hasattr(view, "getCamera"):
@@ -1836,12 +1831,12 @@ If there are PROBLEMS, explain briefly what's wrong and edit source.py to fix th
                         # Force full GUI update before capturing
                         FreeCADGui.updateGui()
 
-                        # Save to project folder
-                        filepath = screenshots_dir / f"{timestamp}_{display_name}.png"
+                        # Save as latest_*.png (overwrites if exists)
+                        filepath = screenshots_dir / f"latest_{display_name}.png"
                         view.saveImage(str(filepath), 800, 600)
                         results.append(str(filepath))
                         FreeCAD.Console.PrintMessage(
-                            f"AIAssistant: Saved {display_name} view to {filepath.name}\n"
+                            f"AIAssistant: Saved {filepath.name}\n"
                         )
 
                     except Exception as e:
