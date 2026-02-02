@@ -22,7 +22,7 @@ from .core import executor as CodeExecutor
 from .core import snapshot as SnapshotManager
 from .core import changes as ChangeDetector
 from .core import source as SourceManager
-from .core.preview import PreviewManager
+from .core.preview import PreviewManager, SandboxReviewSession
 from .persistence import activity as ActivityLogger
 from .persistence.session import SessionManager
 from .widgets.chat import ChatWidget
@@ -91,6 +91,11 @@ class AIAssistantDockWidget(QtWidgets.QDockWidget):
         self._self_review_attempt = 0  # Current self-review attempt
         self._self_review_change_set = None  # Pending change set to show after review
         self._max_self_review_attempts = 2  # Max auto-fix iterations in self-review
+
+        # Sandbox self-review state (new flow: self-review before user approval)
+        self._sandbox_session: SandboxReviewSession = None
+        self._sandbox_review_worker = None  # Worker for sandbox self-review
+        self._sandbox_review_response = ""  # Last response from sandbox self-review
 
         # Plan mode state
         self._pending_plan = None  # Approved plan text for code generation
@@ -741,13 +746,13 @@ Do NOT write any code. Only output the numbered plan steps."""
     def _handle_source_edit_response(self, response: str, attempt: int = 1):
         """Handle response where Claude edited source.py directly.
 
-        This is the new direct source editing flow:
-        1. Get OLD source.py from backup
-        2. Get NEW source.py from disk (Claude already edited it)
-        3. Create diff preview showing what changed
-        4. On approve: execute new source.py
-        5. On cancel: restore from backup
-        6. On execution error: request fix from Claude and retry
+        NEW FLOW (self-review before user approval):
+        1. Get NEW source.py from disk (Claude already edited it)
+        2. Create persistent sandbox and execute
+        3. If self-review enabled: Claude reviews sandbox, can iterate
+        4. Show preview to user (after Claude is satisfied)
+        5. On approve: execute on real document
+        6. On cancel: restore from backup
 
         Args:
             response: Claude's text response (explanation of changes)
@@ -770,9 +775,14 @@ Do NOT write any code. Only output the numbered plan steps."""
             self._chat.add_assistant_message(response, tool_calls=tool_calls)
             return
 
-        # Create diff preview - execute OLD vs NEW, show differences
-        FreeCAD.Console.PrintMessage(f"AIAssistant: Creating diff preview (attempt {attempt})...\n")
-        success, error_msg = self._preview_manager.create_diff_preview(old_source, new_source)
+        # Store response for later use in finalize
+        self._sandbox_review_response = response
+
+        # Create persistent sandbox for self-review
+        FreeCAD.Console.PrintMessage(
+            f"AIAssistant: Creating sandbox for review (attempt {attempt})...\n"
+        )
+        success, error_msg, session = self._preview_manager.create_sandbox_for_review(new_source)
 
         # Capture warnings from sandbox execution (for agentic learning)
         sandbox_warnings = self._preview_manager.get_last_warnings()
@@ -780,37 +790,26 @@ Do NOT write any code. Only output the numbered plan steps."""
             self._last_execution_warnings.extend(sandbox_warnings)
             self._preview_manager.clear_warnings()
 
-        if success:
-            # Hide typing indicator (may have been shown during auto-fix attempts)
+        if success and session:
+            # Hide typing indicator
             self._chat.hide_typing()
 
-            # Get preview summary
-            preview_items = self._preview_manager.get_preview_summary()
-            is_deletion = self._preview_manager.is_deletion_preview()
+            # Store session
+            self._sandbox_session = session
 
             FreeCAD.Console.PrintMessage(
-                f"AIAssistant: Diff preview created with {len(preview_items)} changes "
-                f"(deletion={is_deletion})\n"
+                f"AIAssistant: Sandbox created with {len(session.object_shapes)} objects\n"
             )
-            ActivityLogger.log_preview_created(len(preview_items), is_deletion)
+            ActivityLogger.log_preview_created(len(session.object_shapes), False)
 
-            # Check if auto-accept is enabled
-            auto_approve = self.auto_accept_action.isChecked()
+            # Check if self-review is enabled
+            if self.self_review_action.isChecked():
+                # NEW FLOW: Run self-review in sandbox before showing to user
+                self._run_sandbox_self_review()
+            else:
+                # Self-review disabled - show preview immediately
+                self._finalize_sandbox_preview()
 
-            # Get tool calls from backend
-            tool_calls = getattr(self.llm, 'last_tool_calls', None)
-
-            # Show preview widget
-            # Note: For source edits, the "code" is the new source.py content
-            # This is used by approve handler to know it's a source edit
-            self._chat.add_preview_message(
-                description=response or "Source.py modified",
-                preview_items=preview_items,
-                code=new_source,  # Full new source.py
-                is_deletion=is_deletion,
-                auto_approve=auto_approve,
-                tool_calls=tool_calls
-            )
         elif error_msg.startswith("EXECUTION_ERROR:"):
             # Execution error - try to auto-fix by asking Claude to fix source.py
             exec_error = error_msg[len("EXECUTION_ERROR:"):]
@@ -1222,9 +1221,9 @@ Read source.py to understand what went wrong, then fix it."""
                 change_set.execution_success = success
                 change_set.execution_message = message
 
-                # Run self-review (will show result when done)
-                self._self_review_attempt = 0  # Reset for new operation
-                self._run_self_review(change_set)
+                # Show result directly - self-review already happened in sandbox
+                # (before user saw the preview and approved)
+                self._show_change_result(change_set)
             else:
                 # Execution failed - restore backup AND re-execute to restore objects
                 FreeCAD.Console.PrintError(f"AIAssistant: Source execution failed: {message}\n")
@@ -1852,6 +1851,304 @@ If there are PROBLEMS, explain briefly what's wrong and edit source.py to fix th
         except Exception as e:
             FreeCAD.Console.PrintWarning(f"AIAssistant: Multi-angle capture failed: {e}\n")
             return []
+
+    # =========================================================================
+    # Sandbox Self-Review (New Flow: Self-review before user approval)
+    # =========================================================================
+
+    def _capture_sandbox_screenshots(self, sandbox_doc_name: str) -> list:
+        """Capture multi-angle screenshots from sandbox document.
+
+        Temporarily switches to sandbox document, captures screenshots,
+        then restores the original active document.
+
+        Args:
+            sandbox_doc_name: Name of the sandbox document to capture from
+
+        Returns:
+            List of file paths to saved screenshots
+        """
+        from datetime import datetime
+
+        results = []
+
+        # Save current state
+        original_doc = FreeCAD.ActiveDocument
+        original_gui_doc = FreeCADGui.ActiveDocument
+
+        try:
+            # Get sandbox document
+            sandbox_doc = FreeCAD.getDocument(sandbox_doc_name)
+            if not sandbox_doc:
+                FreeCAD.Console.PrintWarning(
+                    f"AIAssistant: Sandbox doc {sandbox_doc_name} not found\n"
+                )
+                return []
+
+            # Switch to sandbox
+            FreeCAD.setActiveDocument(sandbox_doc_name)
+            FreeCADGui.setActiveDocument(sandbox_doc_name)
+            FreeCADGui.updateGui()
+
+            gui_doc = FreeCADGui.getDocument(sandbox_doc_name)
+            if not gui_doc or not gui_doc.ActiveView:
+                FreeCAD.Console.PrintWarning(
+                    "AIAssistant: No GUI view for sandbox document\n"
+                )
+                return []
+
+            view = gui_doc.ActiveView
+            if not hasattr(view, "saveImage"):
+                return []
+
+            # Views to capture
+            views = [
+                ("viewIsometric", "sandbox_isometric"),
+                ("viewFront", "sandbox_front"),
+                ("viewRight", "sandbox_right"),
+                ("viewTop", "sandbox_top"),
+            ]
+
+            # Create screenshots directory
+            if not self._project_dir:
+                return []
+
+            screenshots_dir = Path(self._project_dir) / "screenshots"
+            screenshots_dir.mkdir(parents=True, exist_ok=True)
+            timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+
+            # Save camera state
+            saved_camera = None
+            if hasattr(view, "getCamera"):
+                saved_camera = view.getCamera()
+
+            if hasattr(view, "setAnimationEnabled"):
+                view.setAnimationEnabled(False)
+
+            try:
+                for method_name, display_name in views:
+                    try:
+                        getattr(view, method_name)()
+                        view.fitAll()
+                        FreeCADGui.updateGui()
+
+                        filepath = screenshots_dir / f"{timestamp}_{display_name}.png"
+                        view.saveImage(str(filepath), 800, 600)
+                        results.append(str(filepath))
+                        FreeCAD.Console.PrintMessage(
+                            f"AIAssistant: Saved sandbox {display_name} to {filepath.name}\n"
+                        )
+                    except Exception as e:
+                        FreeCAD.Console.PrintWarning(
+                            f"AIAssistant: Failed sandbox capture {display_name}: {e}\n"
+                        )
+            finally:
+                if saved_camera and hasattr(view, "setCamera"):
+                    view.setCamera(saved_camera)
+                if hasattr(view, "setAnimationEnabled"):
+                    view.setAnimationEnabled(True)
+
+            return results
+
+        except Exception as e:
+            FreeCAD.Console.PrintWarning(
+                f"AIAssistant: Sandbox screenshot capture failed: {e}\n"
+            )
+            return []
+
+        finally:
+            # Restore original document
+            if original_doc:
+                try:
+                    FreeCAD.setActiveDocument(original_doc.Name)
+                except Exception:
+                    pass
+            if original_gui_doc:
+                try:
+                    FreeCADGui.setActiveDocument(original_gui_doc.Name)
+                    FreeCADGui.updateGui()
+                except Exception:
+                    pass
+
+    def _run_sandbox_self_review(self):
+        """Run self-review with screenshots from sandbox document.
+
+        This is the new flow where self-review happens BEFORE user approval.
+        Claude reviews the sandbox result and can iterate to fix issues.
+        """
+        if not self._sandbox_session or not self._sandbox_session.is_active:
+            FreeCAD.Console.PrintWarning(
+                "AIAssistant: No active sandbox session for self-review\n"
+            )
+            self._finalize_sandbox_preview()
+            return
+
+        # Check iteration limit
+        if self._sandbox_session.iteration >= self._sandbox_session.max_iterations:
+            FreeCAD.Console.PrintMessage(
+                f"AIAssistant: Sandbox self-review max iterations reached, showing preview\n"
+            )
+            self._finalize_sandbox_preview()
+            return
+
+        FreeCAD.Console.PrintMessage(
+            f"AIAssistant: Running sandbox self-review (iteration {self._sandbox_session.iteration + 1})...\n"
+        )
+        self._chat.show_typing()
+
+        # Capture screenshots from sandbox
+        screenshots = self._capture_sandbox_screenshots(
+            self._sandbox_session.sandbox_doc_name
+        )
+
+        if not screenshots:
+            FreeCAD.Console.PrintWarning(
+                "AIAssistant: No sandbox screenshots, skipping self-review\n"
+            )
+            self._chat.hide_typing()
+            self._finalize_sandbox_preview()
+            return
+
+        # Build review prompt
+        review_prompt = """I just generated code that creates a 3D model. Please review the screenshots showing the result from multiple angles.
+
+IMPORTANT: Look carefully at the geometry from ALL angles. Common issues to check:
+- Objects not connected/aligned properly
+- Missing features or incomplete geometry
+- Objects floating in wrong positions
+- Obvious visual errors or glitches
+- Shape doesn't match the user's request
+
+If the result looks CORRECT and matches the original request, respond with just: "LOOKS_GOOD"
+
+If there are PROBLEMS, explain briefly what's wrong and edit source.py to fix them. Focus on the most obvious issues first."""
+
+        # Send to Claude with sandbox screenshots
+        self._sandbox_review_worker = LLMWorker(
+            self.llm, review_prompt, "", [],
+            screenshot=None,
+            multi_angle_screenshots=screenshots
+        )
+        self._sandbox_review_worker.finished.connect(self._on_sandbox_review_response)
+        self._sandbox_review_worker.error.connect(self._on_sandbox_review_error)
+        self._sandbox_review_worker.start()
+
+    def _on_sandbox_review_response(self, response: str):
+        """Handle response from sandbox self-review.
+
+        If Claude says LOOKS_GOOD, show preview to user.
+        If Claude edited source.py, re-execute in sandbox and loop.
+        """
+        self._chat.hide_typing()
+        self._sandbox_review_response = response
+
+        # Log the review
+        ActivityLogger.log_llm_response(
+            f"[Sandbox Self-Review] {response}",
+            session_id=self.session_manager.get_current_session_id()
+        )
+
+        # Check if Claude is satisfied
+        if "LOOKS_GOOD" in response.upper():
+            FreeCAD.Console.PrintMessage(
+                "AIAssistant: Sandbox self-review passed, showing preview to user\n"
+            )
+            self._finalize_sandbox_preview()
+            return
+
+        # Check if Claude edited source.py
+        if getattr(self.llm, 'source_was_edited', False):
+            FreeCAD.Console.PrintMessage(
+                "AIAssistant: Claude edited source.py during sandbox review, re-executing...\n"
+            )
+
+            # Re-read edited source
+            new_source = SourceManager.read_source()
+
+            # Re-execute in sandbox
+            success, error_msg = self._preview_manager.re_execute_in_sandbox(
+                self._sandbox_session, new_source
+            )
+
+            if success:
+                # Loop - run another self-review iteration
+                self._run_sandbox_self_review()
+            else:
+                # Execution failed - request fix
+                FreeCAD.Console.PrintWarning(
+                    f"AIAssistant: Sandbox re-execution failed: {error_msg[:100]}...\n"
+                )
+                # For now, show current state to user
+                self._finalize_sandbox_preview()
+        else:
+            # Claude found issues but didn't fix - show current result
+            FreeCAD.Console.PrintMessage(
+                "AIAssistant: Claude noted issues but didn't edit, showing preview\n"
+            )
+            self._finalize_sandbox_preview()
+
+    def _on_sandbox_review_error(self, error_msg: str):
+        """Handle error from sandbox self-review request."""
+        FreeCAD.Console.PrintWarning(
+            f"AIAssistant: Sandbox self-review failed: {error_msg}\n"
+        )
+        self._chat.hide_typing()
+        # Fall back to showing preview without review
+        self._finalize_sandbox_preview()
+
+    def _finalize_sandbox_preview(self):
+        """Self-review complete - create preview and show to user.
+
+        This is called after Claude says LOOKS_GOOD or max iterations reached.
+        Creates green preview shapes from sandbox and shows approval widget.
+        """
+        if not self._sandbox_session:
+            FreeCAD.Console.PrintWarning(
+                "AIAssistant: No sandbox session to finalize\n"
+            )
+            return
+
+        # Create preview shapes in main doc from sandbox
+        success = self._preview_manager.commit_sandbox_to_preview(self._sandbox_session)
+
+        if not success:
+            FreeCAD.Console.PrintWarning(
+                "AIAssistant: Failed to create preview from sandbox\n"
+            )
+            # Clean up and show error
+            self._preview_manager.close_sandbox(self._sandbox_session)
+            self._sandbox_session = None
+            self._chat.add_error_message("Failed to create preview")
+            return
+
+        # Close sandbox (preview shapes are now in main doc)
+        self._preview_manager.close_sandbox(self._sandbox_session)
+
+        # Get preview summary
+        preview_items = self._preview_manager.get_preview_summary()
+
+        FreeCAD.Console.PrintMessage(
+            f"AIAssistant: Sandbox preview finalized with {len(preview_items)} objects\n"
+        )
+
+        # Check if auto-accept is enabled
+        auto_approve = self.auto_accept_action.isChecked()
+
+        # Get tool calls from backend
+        tool_calls = getattr(self.llm, 'last_tool_calls', None)
+
+        # Show preview widget to user
+        self._chat.add_preview_message(
+            description=self._sandbox_review_response or "Source.py modified",
+            preview_items=preview_items,
+            code=self._sandbox_session.source_content,
+            is_deletion=False,
+            auto_approve=auto_approve,
+            tool_calls=tool_calls
+        )
+
+        # Clean up session reference (but keep source content for approval)
+        self._sandbox_session = None
 
     def closeEvent(self, event):
         """Clean up when panel is closed."""

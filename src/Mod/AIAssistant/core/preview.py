@@ -12,7 +12,8 @@ import re
 import FreeCAD
 import FreeCADGui
 import Part
-from typing import List, Dict, Optional, Tuple
+from dataclasses import dataclass, field
+from typing import List, Dict, Optional, Tuple, Any
 
 # Preview styling for creation
 PREVIEW_COLOR = (0.1, 0.9, 0.3)  # Green
@@ -27,6 +28,23 @@ _DELETION_PATTERNS = [
     r'\.removeObject\s*\(\s*["\'](\w+)["\']\s*\)',  # doc.removeObject('Name')
     r'\.removeObjectsFromDocument\s*\(',             # bulk removal
 ]
+
+
+@dataclass
+class SandboxReviewSession:
+    """Tracks a persistent sandbox for self-review iterations.
+
+    The sandbox document is kept alive through multiple self-review cycles,
+    allowing Claude to iterate and fix issues before the user sees the preview.
+    """
+    sandbox_doc_name: str = ""
+    main_doc_name: str = ""
+    source_content: str = ""  # Current source.py being reviewed
+    iteration: int = 0
+    max_iterations: int = 3
+    preview_objects: List[str] = field(default_factory=list)  # Preview shapes in main doc
+    object_shapes: Dict[str, Any] = field(default_factory=dict)  # Shapes from sandbox
+    is_active: bool = False
 
 
 class PreviewManager:
@@ -828,3 +846,298 @@ class PreviewManager:
     def get_pending_code(self) -> str:
         """Get the pending code for the current preview."""
         return self._pending_code
+
+    # =========================================================================
+    # Sandbox Self-Review Methods
+    # =========================================================================
+
+    def create_sandbox_for_review(self, new_source: str) -> Tuple[bool, str, Optional[SandboxReviewSession]]:
+        """Create a persistent sandbox for self-review iterations.
+
+        Unlike create_diff_preview(), this keeps the sandbox document alive
+        so Claude can iterate and fix issues before the user sees the preview.
+
+        Args:
+            new_source: The new source.py content to execute
+
+        Returns:
+            Tuple of (success, error_message, session)
+            - success: True if sandbox was created and code executed
+            - error_message: Error details if failed (EXECUTION_ERROR: prefix for code errors)
+            - session: SandboxReviewSession object if successful, None otherwise
+        """
+        import traceback
+        from .executor import WarningCapture
+
+        main_doc = FreeCAD.ActiveDocument
+        if not main_doc:
+            return (False, "No active document", None)
+
+        self._main_doc_name = main_doc.Name
+        self._pending_code = new_source
+
+        # Create session
+        session = SandboxReviewSession(
+            main_doc_name=main_doc.Name,
+            source_content=new_source,
+            is_active=True,
+        )
+
+        # Create sandbox document (NOT hidden - we need GUI view for screenshots)
+        # The sandbox will be visible briefly during self-review, but that's necessary
+        # for capturing screenshots that Claude can review
+        sandbox_doc = FreeCAD.newDocument("__AISelfReviewSandbox__")
+
+        session.sandbox_doc_name = sandbox_doc.Name
+
+        # Execute source in sandbox
+        try:
+            exec_globals = {
+                'FreeCAD': FreeCAD,
+                'Part': Part,
+                'doc': sandbox_doc,
+            }
+
+            # Add common imports
+            try:
+                import Draft
+                exec_globals['Draft'] = Draft
+            except ImportError:
+                pass
+
+            try:
+                import Arch
+                exec_globals['Arch'] = Arch
+            except ImportError:
+                pass
+
+            # Execute with warning capture
+            FreeCAD.setActiveDocument(sandbox_doc.Name)
+            try:
+                with WarningCapture() as capture:
+                    exec(new_source, exec_globals)
+                    sandbox_doc.recompute()
+                self._last_sandbox_warnings = capture.warnings
+            except Exception as exec_error:
+                error_msg = f"EXECUTION_ERROR:{type(exec_error).__name__}: {exec_error}\n{traceback.format_exc()}"
+                FreeCAD.Console.PrintError(f"AIAssistant: Sandbox exec failed: {exec_error}\n")
+                self.close_sandbox(session)
+                return (False, error_msg, None)
+            finally:
+                if self._main_doc_name and FreeCAD.getDocument(self._main_doc_name):
+                    FreeCAD.setActiveDocument(self._main_doc_name)
+
+            # Collect shapes from sandbox
+            for obj in sandbox_doc.Objects:
+                if obj.TypeId in ("App::Origin", "App::Plane", "App::Line"):
+                    continue
+                if hasattr(obj, 'Shape') and obj.Shape and not obj.Shape.isNull():
+                    session.object_shapes[obj.Name] = {
+                        'shape': obj.Shape.copy(),
+                        'label': obj.Label,
+                    }
+
+            FreeCAD.Console.PrintMessage(
+                f"AIAssistant: Sandbox created with {len(session.object_shapes)} objects\n"
+            )
+
+            return (True, "", session)
+
+        except Exception as e:
+            error_msg = f"{type(e).__name__}: {e}\n{traceback.format_exc()}"
+            FreeCAD.Console.PrintError(f"AIAssistant: Failed to create sandbox: {e}\n")
+            self.close_sandbox(session)
+            return (False, error_msg, None)
+
+    def re_execute_in_sandbox(self, session: SandboxReviewSession, new_source: str) -> Tuple[bool, str]:
+        """Re-execute source in existing sandbox after Claude made edits.
+
+        Clears all objects in the sandbox and re-executes with new source.
+
+        Args:
+            session: Active sandbox session
+            new_source: Updated source.py content
+
+        Returns:
+            Tuple of (success, error_message)
+        """
+        import traceback
+        from .executor import WarningCapture
+
+        if not session or not session.is_active:
+            return (False, "No active sandbox session")
+
+        sandbox_doc = FreeCAD.getDocument(session.sandbox_doc_name)
+        if not sandbox_doc:
+            return (False, f"Sandbox document {session.sandbox_doc_name} not found")
+
+        # Clear existing objects
+        objects_to_remove = [
+            obj.Name for obj in sandbox_doc.Objects
+            if obj.TypeId not in ("App::Origin", "App::Plane", "App::Line")
+        ]
+        for obj_name in objects_to_remove:
+            try:
+                sandbox_doc.removeObject(obj_name)
+            except Exception:
+                pass
+
+        session.object_shapes.clear()
+        session.source_content = new_source
+        session.iteration += 1
+
+        # Re-execute
+        try:
+            exec_globals = {
+                'FreeCAD': FreeCAD,
+                'Part': Part,
+                'doc': sandbox_doc,
+            }
+
+            try:
+                import Draft
+                exec_globals['Draft'] = Draft
+            except ImportError:
+                pass
+
+            try:
+                import Arch
+                exec_globals['Arch'] = Arch
+            except ImportError:
+                pass
+
+            FreeCAD.setActiveDocument(sandbox_doc.Name)
+            try:
+                with WarningCapture() as capture:
+                    exec(new_source, exec_globals)
+                    sandbox_doc.recompute()
+                self._last_sandbox_warnings = capture.warnings
+            except Exception as exec_error:
+                error_msg = f"EXECUTION_ERROR:{type(exec_error).__name__}: {exec_error}\n{traceback.format_exc()}"
+                return (False, error_msg)
+            finally:
+                if self._main_doc_name and FreeCAD.getDocument(self._main_doc_name):
+                    FreeCAD.setActiveDocument(self._main_doc_name)
+
+            # Collect shapes
+            for obj in sandbox_doc.Objects:
+                if obj.TypeId in ("App::Origin", "App::Plane", "App::Line"):
+                    continue
+                if hasattr(obj, 'Shape') and obj.Shape and not obj.Shape.isNull():
+                    session.object_shapes[obj.Name] = {
+                        'shape': obj.Shape.copy(),
+                        'label': obj.Label,
+                    }
+
+            FreeCAD.Console.PrintMessage(
+                f"AIAssistant: Re-executed sandbox (iteration {session.iteration}), "
+                f"{len(session.object_shapes)} objects\n"
+            )
+
+            return (True, "")
+
+        except Exception as e:
+            error_msg = f"{type(e).__name__}: {e}\n{traceback.format_exc()}"
+            return (False, error_msg)
+
+    def commit_sandbox_to_preview(self, session: SandboxReviewSession) -> bool:
+        """Create green preview shapes in main doc from sandbox objects.
+
+        Called after self-review is complete to show the final result to user.
+
+        Args:
+            session: Sandbox session with collected shapes
+
+        Returns:
+            True if preview was created successfully
+        """
+        if not session or not session.object_shapes:
+            return False
+
+        main_doc = FreeCAD.getDocument(session.main_doc_name)
+        if not main_doc:
+            return False
+
+        # Clear any existing preview
+        self.clear_preview()
+
+        # Store pending code for approval handler
+        self._pending_code = session.source_content
+        self._main_doc_name = session.main_doc_name
+
+        # Create preview shapes
+        preview_count = 0
+        for name, data in session.object_shapes.items():
+            try:
+                preview_name = f"__preview_{name}"
+                preview = main_doc.addObject("Part::Feature", preview_name)
+                preview.Shape = data['shape']
+                preview.Label = f"[Preview] {data['label']}"
+
+                if hasattr(preview, 'ViewObject') and preview.ViewObject:
+                    preview.ViewObject.ShapeColor = PREVIEW_COLOR
+                    preview.ViewObject.Transparency = PREVIEW_TRANSPARENCY
+                    preview.ViewObject.DisplayMode = "Shaded"
+                    preview.ViewObject.LineColor = (0.0, 0.7, 0.2)
+
+                self._preview_objects.append(preview_name)
+                preview_count += 1
+            except Exception as e:
+                FreeCAD.Console.PrintWarning(
+                    f"AIAssistant: Failed to create preview for {name}: {e}\n"
+                )
+
+        main_doc.recompute()
+
+        # Fit view
+        try:
+            if FreeCADGui.ActiveDocument and FreeCADGui.ActiveDocument.ActiveView:
+                FreeCADGui.ActiveDocument.ActiveView.fitAll()
+        except Exception:
+            pass
+
+        FreeCAD.Console.PrintMessage(
+            f"AIAssistant: Created preview with {preview_count} objects from sandbox\n"
+        )
+
+        return preview_count > 0
+
+    def close_sandbox(self, session: Optional[SandboxReviewSession]) -> None:
+        """Close sandbox document and clean up session.
+
+        Args:
+            session: Sandbox session to close
+        """
+        if not session:
+            return
+
+        session.is_active = False
+
+        if session.sandbox_doc_name:
+            try:
+                sandbox_doc = FreeCAD.getDocument(session.sandbox_doc_name)
+                if sandbox_doc:
+                    FreeCAD.closeDocument(session.sandbox_doc_name)
+                    FreeCAD.Console.PrintMessage(
+                        f"AIAssistant: Closed sandbox {session.sandbox_doc_name}\n"
+                    )
+            except Exception as e:
+                FreeCAD.Console.PrintWarning(
+                    f"AIAssistant: Failed to close sandbox: {e}\n"
+                )
+
+        session.object_shapes.clear()
+        session.preview_objects.clear()
+
+    def get_sandbox_doc(self, session: SandboxReviewSession) -> Optional[Any]:
+        """Get the sandbox document for screenshot capture.
+
+        Args:
+            session: Active sandbox session
+
+        Returns:
+            FreeCAD.Document or None
+        """
+        if not session or not session.is_active:
+            return None
+        return FreeCAD.getDocument(session.sandbox_doc_name)
