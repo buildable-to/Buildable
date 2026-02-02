@@ -15,6 +15,32 @@
 - Always end with `doc.recompute()`
 - Use Names (not Labels) when referencing objects in code
 
+## Positioning Objects (CRITICAL)
+
+**Single Body = auto-positioning.** Features in one Body stack automatically via the feature chain.
+
+**Multiple Bodies need explicit Placement:**
+```python
+roof_body.Placement = FreeCAD.Placement(
+    FreeCAD.Vector(0, 0, wall_height),  # Position at top of walls
+    FreeCAD.Rotation(0, 0, 0, 1)
+)
+```
+
+**Attach sketches to existing geometry** for relative positioning:
+```python
+wall_sketch.AttachmentSupport = [(floor_pad, "Face6")]  # Top face of floor
+wall_sketch.MapMode = "FlatFace"
+doc.recompute()  # Required after setting attachment
+```
+
+**Part module shapes** also need explicit positioning:
+```python
+roof = Part.makeBox(length, width, height)
+roof.translate(FreeCAD.Vector(0, 0, wall_height))
+Part.show(roof, "Roof")
+```
+
 ## API Discovery
 
 When unsure about FreeCAD APIs, **search the source code**:
@@ -39,3 +65,4 @@ Key modules:
 - Use `pad.SideType = "Symmetric"` not `pad.Midplane = True` (deprecated)
 - Call `doc.recompute()` after setting `AttachmentSupport`
 - Circular edges have 1 vertex, not 2
+- Face numbering changes after boolean ops
