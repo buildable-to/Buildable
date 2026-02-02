@@ -52,6 +52,24 @@ class PreviewManager:
         # Modification preview state (same name, different geometry)
         self._modified_names: List[str] = []  # Object names being modified
 
+        # Warnings captured during sandbox execution (for agentic learning)
+        self._last_sandbox_warnings: List[str] = []
+
+    def get_last_warnings(self) -> List[str]:
+        """Get warnings captured during the last sandbox execution.
+
+        Used for agentic learning - warnings are fed back to Claude
+        so it can learn to avoid deprecated APIs.
+
+        Returns:
+            List of warning messages
+        """
+        return self._last_sandbox_warnings.copy()
+
+    def clear_warnings(self):
+        """Clear stored warnings after they've been consumed."""
+        self._last_sandbox_warnings = []
+
     def create_preview(self, code: str) -> tuple:
         """Create preview - route to deletion or creation path.
 
@@ -550,7 +568,7 @@ class PreviewManager:
             FreeCAD.Console.PrintMessage(
                 "AIAssistant: Executing old source.py in sandbox...\n"
             )
-            old_objects, old_shapes, old_error = self._execute_source_in_sandbox(old_source)
+            old_objects, old_shapes, old_error, old_warnings = self._execute_source_in_sandbox(old_source)
             if old_error:
                 # Old source failed - this shouldn't happen normally
                 FreeCAD.Console.PrintWarning(
@@ -564,7 +582,7 @@ class PreviewManager:
             FreeCAD.Console.PrintMessage(
                 "AIAssistant: Executing new source.py in sandbox...\n"
             )
-            new_objects, new_shapes, new_error = self._execute_source_in_sandbox(new_source)
+            new_objects, new_shapes, new_error, new_warnings = self._execute_source_in_sandbox(new_source)
             if new_error:
                 # New source failed - return error so AIPanel can request fix from Claude
                 FreeCAD.Console.PrintError(
@@ -574,6 +592,10 @@ class PreviewManager:
             FreeCAD.Console.PrintMessage(
                 f"AIAssistant: New source objects: {sorted(new_objects)}\n"
             )
+
+            # Store warnings from new source execution for agentic learning
+            # (these will be fed back to Claude on next request)
+            self._last_sandbox_warnings = new_warnings
 
             # Compute diff
             deleted_names = old_objects - new_objects  # Objects removed
@@ -679,17 +701,19 @@ class PreviewManager:
             self.clear_preview()
             return (False, error_msg)
 
-    def _execute_source_in_sandbox(self, source_code: str) -> Tuple[set, Dict, str]:
+    def _execute_source_in_sandbox(self, source_code: str) -> Tuple[set, Dict, str, List[str]]:
         """Execute source code in temp doc, return object names and shapes.
 
         Args:
             source_code: Python source code to execute
 
         Returns:
-            Tuple of (object_names: set, shapes: dict mapping name -> Shape, error: str)
+            Tuple of (object_names: set, shapes: dict mapping name -> Shape, error: str, warnings: list)
             If execution fails, error contains the full traceback.
+            warnings contains any deprecation or other warnings captured during execution.
         """
         import traceback
+        from .executor import WarningCapture
 
         temp_doc = None
         try:
@@ -718,18 +742,21 @@ class PreviewManager:
             except ImportError:
                 pass
 
-            # Execute source
+            # Execute source with warning capture
             FreeCAD.setActiveDocument(temp_doc.Name)
+            warnings = []
             try:
-                exec(source_code, exec_globals)
-                temp_doc.recompute()
+                with WarningCapture() as capture:
+                    exec(source_code, exec_globals)
+                    temp_doc.recompute()
+                warnings = capture.warnings
             except Exception as exec_error:
                 error_msg = f"{type(exec_error).__name__}: {exec_error}\n{traceback.format_exc()}"
                 FreeCAD.Console.PrintError(
                     f"AIAssistant: Sandbox exec failed: {exec_error}\n"
                 )
                 # Return empty set with error message
-                return set(), {}, error_msg
+                return set(), {}, error_msg, []
             finally:
                 if self._main_doc_name and FreeCAD.getDocument(self._main_doc_name):
                     FreeCAD.setActiveDocument(self._main_doc_name)
@@ -744,7 +771,7 @@ class PreviewManager:
                 if hasattr(obj, 'Shape') and obj.Shape and not obj.Shape.isNull():
                     shapes[obj.Name] = obj.Shape.copy()
 
-            return object_names, shapes, ""  # Empty string = no error
+            return object_names, shapes, "", warnings
 
         finally:
             # Close temp doc
