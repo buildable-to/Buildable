@@ -755,6 +755,12 @@ Do NOT write any code. Only output the numbered plan steps."""
         FreeCAD.Console.PrintMessage(f"AIAssistant: Creating diff preview (attempt {attempt})...\n")
         success, error_msg = self._preview_manager.create_diff_preview(old_source, new_source)
 
+        # Capture warnings from sandbox execution (for agentic learning)
+        sandbox_warnings = self._preview_manager.get_last_warnings()
+        if sandbox_warnings:
+            self._last_execution_warnings.extend(sandbox_warnings)
+            self._preview_manager.clear_warnings()
+
         if success:
             # Hide typing indicator (may have been shown during auto-fix attempts)
             self._chat.hide_typing()
