@@ -1473,11 +1473,11 @@ Return ONLY the Python code in a ```python code block."""
                 freecad_source = str(Path(__file__).parent.parent.parent)
 
                 # Read template and substitute placeholders
-                template_content = template_path.read_text()
+                template_content = template_path.read_text(encoding="utf-8")
                 content = template_content.replace("{{FREECAD_SOURCE}}", freecad_source)
 
                 # Write substituted content
-                claude_md_path.write_text(content)
+                claude_md_path.write_text(content, encoding="utf-8")
                 FreeCAD.Console.PrintMessage(
                     f"AIAssistant: Created CLAUDE.md in {self._project_dir}\n"
                 )
