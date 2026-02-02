@@ -293,6 +293,38 @@ ANIMATION = {
 }
 
 # =============================================================================
+# SHADOWS (for QGraphicsDropShadowEffect)
+# =============================================================================
+
+SHADOWS = {
+    "sm": {"blur": 4, "x": 0, "y": 1, "opacity": 20},
+    "md": {"blur": 8, "x": 0, "y": 2, "opacity": 30},
+    "lg": {"blur": 16, "x": 0, "y": 4, "opacity": 40},
+}
+
+
+def get_drop_shadow(size: str = "md"):
+    """
+    Create a QGraphicsDropShadowEffect with the specified size.
+
+    Args:
+        size: One of "sm", "md", "lg"
+
+    Returns:
+        QGraphicsDropShadowEffect configured with the shadow parameters
+    """
+    from PySide6 import QtWidgets, QtGui
+
+    config = SHADOWS.get(size, SHADOWS["md"])
+    shadow = QtWidgets.QGraphicsDropShadowEffect()
+    shadow.setBlurRadius(config["blur"])
+    shadow.setXOffset(config["x"])
+    shadow.setYOffset(config["y"])
+    shadow.setColor(QtGui.QColor(0, 0, 0, config["opacity"]))
+    return shadow
+
+
+# =============================================================================
 # COMPONENT-SPECIFIC STYLES
 # =============================================================================
 

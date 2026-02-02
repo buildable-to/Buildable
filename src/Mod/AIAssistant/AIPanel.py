@@ -802,9 +802,9 @@ Do NOT write any code. Only output the numbered plan steps."""
             )
             ActivityLogger.log_preview_created(len(session.object_shapes), False)
 
-            # Check if self-review is enabled
-            if self.self_review_action.isChecked():
-                # NEW FLOW: Run self-review in sandbox before showing to user
+            # Check if self-review is enabled (use context widget checkbox)
+            if self._context_widget.show_review_feedback():
+                # Run self-review in sandbox before showing to user
                 self._run_sandbox_self_review()
             else:
                 # Self-review disabled - show preview immediately
@@ -2136,17 +2136,18 @@ If there are problems: Explain what's wrong and edit source.py to fix them."""
         # Check if auto-accept is enabled
         auto_approve = self.auto_accept_action.isChecked()
 
-        # Get tool calls from backend
-        tool_calls = getattr(self.llm, 'last_tool_calls', None)
+        # Check if review feedback should be shown
+        show_review = self._context_widget.show_review_feedback()
+        description = self._sandbox_review_response if show_review else ""
 
-        # Show preview widget to user
+        # Show preview widget to user (no tool_calls - self-review is internal)
         self._chat.add_preview_message(
-            description=self._sandbox_review_response or "Source.py modified",
+            description=description,
             preview_items=preview_items,
             code=self._sandbox_session.source_content,
             is_deletion=False,
             auto_approve=auto_approve,
-            tool_calls=tool_calls
+            tool_calls=None
         )
 
         # Clean up session reference (but keep source content for approval)
