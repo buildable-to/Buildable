@@ -1,7 +1,86 @@
 # FreeCAD Python API Quick Reference
-# Extracted from src/Mod/Part/App/TopoShape.pyi and AppPartPy.cpp
 
-## Creating Primitives
+## Module Selection Guide
+
+| Task | Module | Why |
+|------|--------|-----|
+| **Buildings** (walls, roof, windows) | `Arch` | Designed for architecture, hollow walls, auto-cut openings |
+| **Mechanical parts** | `PartDesign` | Parametric features, single solid body |
+| **Simple shapes + booleans** | `Part` | Quick prototypes, flexible combinations |
+
+---
+
+## Arch Module (Buildings & Architecture)
+
+**ALWAYS use for buildings, warehouses, houses.**
+
+```python
+import Arch
+import Draft
+import FreeCAD
+
+doc = FreeCAD.ActiveDocument or FreeCAD.newDocument("Building")
+
+# === WALLS ===
+# Simple wall (standalone)
+wall = Arch.makeWall(None, length=5000, width=200, height=3000, name="Wall")
+
+# Wall from baseline (for precise placement)
+line = Draft.make_line(FreeCAD.Vector(0,0,0), FreeCAD.Vector(5000,0,0))
+wall = Arch.makeWall(line, width=200, height=3000)
+
+# Position a wall
+wall.Placement.Base = FreeCAD.Vector(0, 5000, 0)
+wall.Placement.Rotation = FreeCAD.Rotation(FreeCAD.Vector(0,0,1), 90)  # Rotate 90°
+
+# === DOORS & WINDOWS (auto-cut through walls) ===
+# Preset window types: "Fixed", "Open 1-pane", "Open 2-pane", "Sash 2-pane",
+#                      "Sliding 2-pane", "Simple door", "Glass door"
+door = Arch.makeWindowPreset("Simple door", width=1000, height=2100,
+                              h1=100, h2=100, w1=0, w2=0, sill=0)
+door.Hosts = [wall]  # Attaches to wall and cuts opening
+door.Placement.Base = FreeCAD.Vector(1000, 0, 0)  # Position along wall
+
+window = Arch.makeWindowPreset("Fixed", width=1200, height=1000)
+window.Hosts = [wall]
+window.Placement.Base = FreeCAD.Vector(3000, 0, 1000)  # 1m from floor
+
+# === ROOF ===
+# IMPORTANT: Set Angles AND Runs AFTER creation
+# For Draft.make_rectangle(length, width), edges: 0=South, 1=East, 2=North, 3=West
+roof_base = Draft.make_rectangle(10000, 8000)
+roof_base.Placement.Base = FreeCAD.Vector(0, 0, 3000)  # At wall top
+roof = Arch.makeRoof(roof_base)
+doc.recompute()  # Let roof initialize
+
+# Hip roof (all 4 sides sloped):
+roof.Angles = [15, 15, 15, 15]  # 15° pitch all sides
+roof.Runs = [4000, 5000, 4000, 5000]  # Run = distance to ridge, height = run * tan(angle)
+doc.recompute()
+
+# Gable roof (2 sloped sides, 2 vertical gable ends):
+# 90° = vertical gable end (run auto-set to 0)
+roof.Angles = [30, 90, 30, 90]  # Sloped on S/N, gable on E/W
+roof.Runs = [4000, 0, 4000, 0]  # Run for sloped sides = half of building width
+doc.recompute()
+
+# === FLOOR/SLAB ===
+floor = Arch.makeStructure(length=10000, width=8000, height=200, name="Floor")
+
+# === COLUMNS/BEAMS ===
+column = Arch.makeStructure(length=300, width=300, height=3000, name="Column")
+column.Placement.Base = FreeCAD.Vector(0, 0, 0)
+
+beam = Arch.makeStructure(length=5000, width=200, height=300, name="Beam")
+beam.Placement.Base = FreeCAD.Vector(0, 0, 3000)
+beam.Placement.Rotation = FreeCAD.Rotation(FreeCAD.Vector(1,0,0), 90)  # Horizontal
+
+doc.recompute()
+```
+
+---
+
+## Part Module (Creating Primitives)
 
 ```python
 Part.makeBox(length, width, height, pnt=Vector(0,0,0), dir=Vector(0,0,1))
@@ -104,3 +183,83 @@ wall_with_door = doc.addObject("Part::Cut", "WallWithDoor")
 wall_with_door.Base = wall
 wall_with_door.Tool = door
 ```
+
+---
+
+## Complete Example: Simple Warehouse (Arch Module)
+
+```python
+import FreeCAD
+import Arch
+import Draft
+
+doc = FreeCAD.ActiveDocument or FreeCAD.newDocument("Warehouse")
+
+# Dimensions (mm)
+length = 20000  # 20m
+width = 12000   # 12m
+wall_height = 6000  # 6m
+wall_thickness = 250
+
+# Floor slab
+floor = Arch.makeStructure(length=length, width=width, height=200, name="Floor")
+floor.Placement.Base = FreeCAD.Vector(0, 0, -200)
+
+# Walls - create baselines, then walls
+south_line = Draft.make_line(FreeCAD.Vector(0,0,0), FreeCAD.Vector(length,0,0))
+north_line = Draft.make_line(FreeCAD.Vector(0,width,0), FreeCAD.Vector(length,width,0))
+west_line = Draft.make_line(FreeCAD.Vector(0,0,0), FreeCAD.Vector(0,width,0))
+east_line = Draft.make_line(FreeCAD.Vector(length,0,0), FreeCAD.Vector(length,width,0))
+
+wall_south = Arch.makeWall(south_line, width=wall_thickness, height=wall_height, name="SouthWall")
+wall_north = Arch.makeWall(north_line, width=wall_thickness, height=wall_height, name="NorthWall")
+wall_west = Arch.makeWall(west_line, width=wall_thickness, height=wall_height, name="WestWall")
+wall_east = Arch.makeWall(east_line, width=wall_thickness, height=wall_height, name="EastWall")
+
+# Large truck door (south wall)
+truck_door = Arch.makeWindowPreset("Simple door", width=4000, height=4500)
+truck_door.Hosts = [wall_south]
+truck_door.Placement.Base = FreeCAD.Vector(length/2 - 2000, 0, 0)
+
+# Personnel door (south wall)
+pers_door = Arch.makeWindowPreset("Simple door", width=1000, height=2100)
+pers_door.Hosts = [wall_south]
+pers_door.Placement.Base = FreeCAD.Vector(2000, 0, 0)
+
+# Windows (east and west walls)
+for i in range(3):
+    win = Arch.makeWindowPreset("Fixed", width=2000, height=1500)
+    win.Hosts = [wall_east]
+    win.Placement.Base = FreeCAD.Vector(length, 2000 + i*3000, 1500)
+
+# Roof (set Angles AND Runs AFTER creation)
+roof_base = Draft.make_rectangle(length + 500, width + 500)  # 500mm overhang
+roof_base.Placement.Base = FreeCAD.Vector(-250, -250, wall_height)
+roof = Arch.makeRoof(roof_base)
+doc.recompute()
+# Gable roof: sloped on S/N (along length), gable ends on E/W
+# Run = horizontal distance from eave to ridge = half of building width
+roof.Angles = [15, 90, 15, 90]
+roof.Runs = [(width + 500) / 2, 0, (width + 500) / 2, 0]  # Run for sloped sides
+doc.recompute()
+```
+
+---
+
+## Coordinate System Reference
+
+```
+        Z (up)
+        |
+        |
+        +------ X (right/East)
+       /
+      /
+     Y (forward/North)
+```
+
+| Plane | Normal | Sketch X | Sketch Y |
+|-------|--------|----------|----------|
+| XY_Plane | +Z | X | Y |
+| XZ_Plane | +Y | X | Z |
+| YZ_Plane | +X | Y | Z |
