@@ -1023,6 +1023,9 @@ Please fix the source.py file using the Edit tool. Common issues:
 - Accessing edge.Vertexes[1] on circular edges (circles only have 1 vertex)
 - Assuming specific edge/face indices after boolean operations
 - Using undefined variables
+- Arch.makeRoof() with angles parameter: Set angles AFTER creation (roof.Angles = [...])
+- Geometry validation failed: Object has invalid/null shape - check API usage
+- Object "failed to compute": Usually means incorrect parameter types or values
 
 Read source.py to understand what went wrong, then fix it."""
 
@@ -2018,16 +2021,26 @@ If there are PROBLEMS, explain briefly what's wrong and edit source.py to fix th
             self._finalize_sandbox_preview()
             return
 
-        # Build review prompt
+        # Build review prompt - be specific about common issues
         review_prompt = """Review these screenshots of the 3D model I just created. Check all angles carefully.
 
-Look for:
-- Geometry issues (disconnected, misaligned, floating objects)
-- Missing or incomplete features
-- Visual errors or glitches
-- Does it match what the user asked for?
+CRITICAL CHECKS:
+1. **Roofs**: If a pitched/gable roof was requested, verify it's NOT flat. Gable roofs should have:
+   - Two sloped faces meeting at a ridge
+   - Triangular gable ends visible from the side
+   - If the roof looks flat or barely rises, the Runs property is likely missing/wrong
 
-If it looks correct: Start your response with [APPROVED] then describe what you see naturally.
+2. **Walls**: Should form complete enclosure. Check corners connect properly.
+
+3. **Openings**: Doors/windows should cut through walls, not float or overlap.
+
+4. **Proportions**: Does the overall shape match what was requested? Check height vs width ratios.
+
+5. **General**: Missing parts, floating objects, Z-fighting (flickering), holes.
+
+REMEMBER: A flat roof when user asked for pitched/gable roof is a MAJOR BUG - fix by setting roof.Runs property.
+
+If it looks correct: Start your response with [APPROVED] then describe what you see.
 
 If there are problems: Explain what's wrong and edit source.py to fix them."""
 
