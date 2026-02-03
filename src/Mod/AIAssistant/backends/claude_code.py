@@ -48,24 +48,47 @@ source.py location: {source_path}
 Current workbench: {workbench}
 FreeCAD repo root: {repo_root}
 
-WORKFLOW:
+## CRITICAL: Choose the Right Approach FIRST
+
+**BEFORE writing any code, classify the task:**
+
+| Task Type | Use This | NOT This |
+|-----------|----------|----------|
+| **Buildings** (walls, roofs, doors, windows) | `Arch` module | PartDesign |
+| **Mechanical parts** (brackets, enclosures, gears) | `PartDesign` | Arch |
+| **Simple shapes + booleans** (quick prototypes) | `Part` module | PartDesign |
+| **Artistic/organic forms** | `Part` module | PartDesign |
+
+**Why this matters:**
+- PartDesign creates a SINGLE contiguous solid - bad for buildings with separate walls/roof
+- Arch module has Wall, Roof, Window objects designed for architecture
+- Part module allows multiple separate shapes combined with booleans
+
+## WORKFLOW
 1. Read source.py to understand current design
-2. Use Edit tool to modify source.py directly
-3. CREATE objects: Add code to source.py
-4. DELETE objects: Remove the relevant code from source.py
-5. MODIFY objects: Edit the relevant code in source.py
-
-## IMPORTANT: Use the correct API for the current workbench
-
-**You MUST use APIs appropriate for "{workbench}".**
+2. **Classify the task** - building? mechanical part? simple shape?
+3. **Choose the right module** - Arch for buildings, PartDesign for mechanical parts
+4. Use Edit tool to modify source.py directly
 
 {api_reference}
 
-## How to Learn the API
-If you need to understand a FreeCAD API function, read the actual source files:
-- Use Glob to find relevant files: `src/Mod/<Workbench>/`
-- Use Read to examine function signatures and docstrings
-- The source code is the authoritative reference
+## Coordinate System & Planes (CRITICAL for correct geometry)
+
+FreeCAD uses RIGHT-HANDED coordinates:
+- **X**: Right (East)
+- **Y**: Forward (North)
+- **Z**: Up
+
+**Standard Planes:**
+- `XY_Plane` (Z=0): Horizontal floor plane. Pad goes UP (+Z), Pocket goes DOWN (-Z)
+- `XZ_Plane` (Y=0): Vertical, faces South. Pad goes NORTH (+Y), Pocket goes SOUTH (-Y)
+- `YZ_Plane` (X=0): Vertical, faces West. Pad goes EAST (+X), Pocket goes WEST (-X)
+
+**For openings in walls (doors/windows):**
+- South wall (Y=0): Sketch on XZ_Plane or wall face, Pocket along +Y
+- North wall (Y=max): Sketch on XZ_Plane offset to Y=max, Pocket along -Y (Reversed=True)
+- East wall (X=max): Sketch on YZ_Plane offset to X=max, Pocket along -X (Reversed=True)
+- West wall (X=0): Sketch on YZ_Plane, Pocket along +X
 
 ## Code Rules
 - Use millimeters for all dimensions
@@ -79,39 +102,125 @@ To ANSWER questions (not modify design): Return clear text explanation."""
 # Workbench API references - point to actual source files
 WORKBENCH_API_REFS = {
     "Draft": """For 2D drafting, use the Draft module:
-- API source: {repo_root}/src/Mod/Draft/draftmake/ (make_line.py, make_circle.py, etc.)
+- API source: {repo_root}/src/Mod/Draft/draftmake/
 - Import: `import Draft`
-- Key functions: Draft.make_line(), Draft.make_wire(), Draft.make_circle(), Draft.make_rectangle(), Draft.make_polygon(), Draft.make_text()
+- Key functions: Draft.make_line(), Draft.make_wire(), Draft.make_circle(), Draft.make_rectangle()
 - All Z coordinates should be 0 for 2D drawings""",
 
-    "Part": """For 3D solid modeling, use the Part module:
-- API source: {repo_root}/src/Mod/Part/App/
-- Import: `import Part`
-- Key functions: Part.makeBox(), Part.makeCylinder(), Part.makeSphere(), shape.fuse(), shape.cut()
-- Reference: {repo_root}/src/Mod/AIAssistant/FREECAD_API.md""",
+    "Part": """## Part Module - Simple 3D Shapes + Booleans
+**BEST FOR:** Quick prototypes, simple geometry, boolean combinations, artistic forms
 
-    "PartDesign": """For parametric feature-based modeling, use PartDesign:
-- API source: {repo_root}/src/Mod/PartDesign/
-- Work inside a Body: doc.addObject("PartDesign::Body", "Body")
-- Create sketches, then Pad/Pocket/Revolve them""",
+```python
+import Part
+
+# Primitives (returns Shape objects)
+box = Part.makeBox(length, width, height)
+cyl = Part.makeCylinder(radius, height)
+sphere = Part.makeSphere(radius)
+
+# Booleans (returns new Shape)
+result = box.cut(cyl)      # Subtract
+result = box.fuse(cyl)     # Union
+result = box.common(cyl)   # Intersection
+
+# Add to document
+obj = doc.addObject("Part::Feature", "MyShape")
+obj.Shape = result
+```
+
+**Reference:** {repo_root}/src/Mod/AIAssistant/FREECAD_API.md""",
+
+    "PartDesign": """## PartDesign - Parametric Mechanical Parts
+**BEST FOR:** Mechanical parts, brackets, enclosures, precise engineering
+**NOT FOR:** Buildings, architecture (use Arch module instead)
+
+**LIMITATION:** Single contiguous solid only. All features must connect.
+
+```python
+import PartDesign
+import Sketcher
+
+# 1. Create Body (container for all features)
+body = doc.addObject("PartDesign::Body", "Body")
+
+# 2. Create Sketch on a plane
+sketch = body.newObject("Sketcher::SketchObject", "Sketch")
+sketch.AttachmentSupport = [(doc.getObject("XY_Plane"), "")]
+sketch.MapMode = "FlatFace"
+
+# 3. Add geometry to sketch
+sketch.addGeometry(Part.LineSegment(V(0,0,0), V(100,0,0)))
+# ... more geometry ...
+
+# 4. Extrude with Pad
+pad = body.newObject("PartDesign::Pad", "Pad")
+pad.Profile = sketch
+pad.Length = 50
+```
+
+**Pocket Direction:** Cuts PERPENDICULAR to sketch plane
+- Sketch on XY → Pocket cuts along Z
+- Sketch on XZ → Pocket cuts along Y
+- Sketch on YZ → Pocket cuts along X""",
 
     "Sketcher": """For constraint-based 2D sketching:
-- API source: {repo_root}/src/Mod/Sketcher/
 - Import: `import Sketcher`
-- Create fully constrained sketches for PartDesign""",
+- Create fully constrained sketches for PartDesign
+- Constraints: Coincident, Horizontal, Vertical, Distance, Radius, etc.""",
 
-    "BIM": """For architectural elements:
-- API source: {repo_root}/src/Mod/BIM/
-- Import: `import Arch`
-- Key functions: Arch.makeWall(), Arch.makeStructure(), Arch.makeWindow()""",
+    "BIM": """## Arch/BIM Module - Buildings & Architecture
+**BEST FOR:** Buildings, walls, roofs, doors, windows, floors
+**USE THIS for warehouses, houses, any architectural structure**
 
-    "Arch": """For architectural elements:
-- API source: {repo_root}/src/Mod/Arch/
-- Import: `import Arch`
-- Key functions: Arch.makeWall(), Arch.makeStructure(), Arch.makeWindow()""",
+```python
+import Arch
+import Draft
+
+# Walls - automatically handle thickness and openings
+wall = Arch.makeWall(baseobj=None, length=5000, width=200, height=3000)
+
+# Or from a baseline
+line = Draft.make_line(FreeCAD.Vector(0,0,0), FreeCAD.Vector(5000,0,0))
+wall = Arch.makeWall(line, width=200, height=3000)
+
+# Openings (doors/windows) - automatically cut through walls
+window = Arch.makeWindowPreset("Simple door", width=1000, height=2100, h1=100, h2=100, w1=0, w2=0, sill=0)
+window.Hosts = [wall]  # Attaches to wall and cuts opening
+
+# Roof
+roof = Arch.makeRoof(baseobj, angles=[45])  # Pitched roof from base wire
+
+# Structure (columns, beams)
+column = Arch.makeStructure(length=300, width=300, height=3000)
+```
+
+**Advantages over PartDesign for buildings:**
+- Walls are hollow by design (inside/outside faces)
+- Windows/doors automatically create openings
+- Roof handles pitch angles correctly
+- IFC export for BIM workflows""",
+
+    "Arch": """## Arch Module - Buildings & Architecture
+**BEST FOR:** Buildings, walls, roofs, doors, windows, floors
+
+```python
+import Arch
+
+# Walls
+wall = Arch.makeWall(None, length=5000, width=200, height=3000)
+
+# Windows/Doors (cut through walls automatically)
+window = Arch.makeWindowPreset("Simple door", width=1000, height=2100)
+window.Hosts = [wall]
+
+# Roof
+roof = Arch.makeRoof(baseobj, angles=[45])
+
+# Structure (columns, beams)
+column = Arch.makeStructure(length=300, width=300, height=3000)
+```""",
 
     "TechDraw": """For technical drawings:
-- API source: {repo_root}/src/Mod/TechDraw/
 - Create pages and add views of 3D objects""",
 }
 
