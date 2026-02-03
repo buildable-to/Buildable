@@ -281,6 +281,32 @@ class PreviewManager:
                 if self._main_doc_name and FreeCAD.getDocument(self._main_doc_name):
                     FreeCAD.setActiveDocument(self._main_doc_name)
 
+            # Validate geometry - catch "silent" failures
+            validation_errors = []
+            for obj in self._temp_doc.Objects:
+                if obj.TypeId in ("App::Origin", "App::Plane", "App::Line"):
+                    continue
+                if hasattr(obj, 'State') and 'Touched' in obj.State:
+                    validation_errors.append(
+                        f"Object '{obj.Label}' ({obj.Name}) failed to compute"
+                    )
+                if hasattr(obj, 'Shape'):
+                    shape = obj.Shape
+                    if shape is None or shape.isNull():
+                        validation_errors.append(
+                            f"Object '{obj.Label}' ({obj.Name}) has null shape"
+                        )
+                    elif not shape.isValid():
+                        validation_errors.append(
+                            f"Object '{obj.Label}' ({obj.Name}) has invalid geometry"
+                        )
+
+            if validation_errors:
+                error_msg = "Geometry validation failed:\n" + "\n".join(validation_errors)
+                FreeCAD.Console.PrintError(f"AIAssistant: {error_msg}\n")
+                self.clear_preview()
+                return (False, error_msg)
+
             # STEP 3: Identify NEW objects (created by LLM code, not in baseline)
             all_objects = set(
                 obj.Name for obj in self._temp_doc.Objects
@@ -779,6 +805,41 @@ class PreviewManager:
                 if self._main_doc_name and FreeCAD.getDocument(self._main_doc_name):
                     FreeCAD.setActiveDocument(self._main_doc_name)
 
+            # Validate geometry - catch "silent" failures where objects are created
+            # but have invalid shapes (common with Arch module)
+            validation_errors = []
+            for obj in temp_doc.Objects:
+                if obj.TypeId in ("App::Origin", "App::Plane", "App::Line"):
+                    continue
+                # Check for objects that need recompute (State contains "Touched")
+                if hasattr(obj, 'State') and 'Touched' in obj.State:
+                    validation_errors.append(
+                        f"Object '{obj.Label}' ({obj.Name}) failed to compute (still Touched after recompute)"
+                    )
+                # Check for invalid shapes
+                if hasattr(obj, 'Shape'):
+                    shape = obj.Shape
+                    if shape is None or shape.isNull():
+                        validation_errors.append(
+                            f"Object '{obj.Label}' ({obj.Name}) has null shape"
+                        )
+                    elif not shape.isValid():
+                        validation_errors.append(
+                            f"Object '{obj.Label}' ({obj.Name}) has invalid geometry (Shape.isValid() = False)"
+                        )
+                    elif shape.Volume == 0 and obj.TypeId not in (
+                        "Part::Part2DObject", "Sketcher::SketchObject",
+                        "Part::Part2DObjectPython", "Draft::Wire"
+                    ):
+                        # Zero volume for 3D objects is suspicious (might be a failed operation)
+                        # But 2D objects like wires/sketches legitimately have zero volume
+                        pass  # Don't report - some valid objects have zero volume
+
+            if validation_errors:
+                error_msg = "Geometry validation failed:\n" + "\n".join(validation_errors)
+                FreeCAD.Console.PrintError(f"AIAssistant: {error_msg}\n")
+                return set(), {}, error_msg, warnings
+
             # Collect object names and shapes
             object_names = set()
             shapes = {}
@@ -927,6 +988,32 @@ class PreviewManager:
                 if self._main_doc_name and FreeCAD.getDocument(self._main_doc_name):
                     FreeCAD.setActiveDocument(self._main_doc_name)
 
+            # Validate geometry - catch "silent" failures
+            validation_errors = []
+            for obj in sandbox_doc.Objects:
+                if obj.TypeId in ("App::Origin", "App::Plane", "App::Line"):
+                    continue
+                if hasattr(obj, 'State') and 'Touched' in obj.State:
+                    validation_errors.append(
+                        f"Object '{obj.Label}' ({obj.Name}) failed to compute"
+                    )
+                if hasattr(obj, 'Shape'):
+                    shape = obj.Shape
+                    if shape is None or shape.isNull():
+                        validation_errors.append(
+                            f"Object '{obj.Label}' ({obj.Name}) has null shape"
+                        )
+                    elif not shape.isValid():
+                        validation_errors.append(
+                            f"Object '{obj.Label}' ({obj.Name}) has invalid geometry"
+                        )
+
+            if validation_errors:
+                error_msg = f"EXECUTION_ERROR:Geometry validation failed:\n" + "\n".join(validation_errors)
+                FreeCAD.Console.PrintError(f"AIAssistant: {error_msg}\n")
+                self.close_sandbox(session)
+                return (False, error_msg, None)
+
             # Collect shapes from sandbox
             for obj in sandbox_doc.Objects:
                 if obj.TypeId in ("App::Origin", "App::Plane", "App::Line"):
@@ -1018,6 +1105,31 @@ class PreviewManager:
             finally:
                 if self._main_doc_name and FreeCAD.getDocument(self._main_doc_name):
                     FreeCAD.setActiveDocument(self._main_doc_name)
+
+            # Validate geometry - catch "silent" failures
+            validation_errors = []
+            for obj in sandbox_doc.Objects:
+                if obj.TypeId in ("App::Origin", "App::Plane", "App::Line"):
+                    continue
+                if hasattr(obj, 'State') and 'Touched' in obj.State:
+                    validation_errors.append(
+                        f"Object '{obj.Label}' ({obj.Name}) failed to compute"
+                    )
+                if hasattr(obj, 'Shape'):
+                    shape = obj.Shape
+                    if shape is None or shape.isNull():
+                        validation_errors.append(
+                            f"Object '{obj.Label}' ({obj.Name}) has null shape"
+                        )
+                    elif not shape.isValid():
+                        validation_errors.append(
+                            f"Object '{obj.Label}' ({obj.Name}) has invalid geometry"
+                        )
+
+            if validation_errors:
+                error_msg = f"EXECUTION_ERROR:Geometry validation failed:\n" + "\n".join(validation_errors)
+                FreeCAD.Console.PrintError(f"AIAssistant: {error_msg}\n")
+                return (False, error_msg)
 
             # Collect shapes
             for obj in sandbox_doc.Objects:
