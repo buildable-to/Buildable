@@ -1,67 +1,110 @@
-# Creating a Windows installer for Buildable
+# Creating a Windows Installer for Buildable
 
-These are instructions for building an NSIS-based installer for Buildable. They were designed for Buildable 0.21 and later,
-and presume that you have cloned a copy of the source code, and therefore have the directory *package/WindowsInstaller*.
+Instructions for building an NSIS-based Windows installer for Buildable.
 
-## Install NSIS
-To set up your system for building an NSIS installer:
-1. Install the latest version 3.x of NSIS (https://nsis.sourceforge.io/Download)
-2. Download these special release files of NSIS that support large strings:</br>
-   https://nsis.sourceforge.io/Special_Builds#Large_strings</br>
-   and copy the contained files into the corresponding NSIS installations folders
-3. Download these special release files of NSIS that support logging:</br>
-   https://nsis.sourceforge.io/Special_Builds#Advanced_logging</br>
-   and copy the contained files into the corresponding NSIS installations folders
-4. Download and install the nsProcess plugin from https://nsis.sourceforge.io/NsProcess_plugin -- you will need the version that supports Unicode, so make sure to follow the appropriate instructions on their site to install that one (as of this writing it involves manually copying and renaming the plugin DLL file).
+## Prerequisites
 
-## Build the installer
-Next, update the installer settings for the current version of Buildable. Starting from the *package/WindowsInstaller* folder in the source tree:
-1. Set the appropriate version strings for the release you are creating. These are used to construct the filename of the installer, among other things. If you have to upload a new version of the installer for the exact same release of Buildable, increment `APP_VERSION BUILD` as needed. The main version numbers are dynamically obtained by calling `buildablecmd.exe`.
-```nsis
-!define APP_VERSION_EMERGENCY "RC1"
-!define APP_VERSION_BUILD 1
-```
-2. If the installer will be made from a LibPack build create a new folder called MSVCRedist within the folder *package/WindowsInstaller* and copy the following files from your MSVC installation into it:
-```
-vcruntime140.dll
-concrt140.dll
-msvcp140.dll
-vcamp140.dll
-vccorlib140.dll
-vcomp140.dll
-```
-3. If required open the file *Settings.nsh* with a text editor (both jEdit and Visual Studio Code are good editors for NSIS files). Edit the following paths to correspond to your system: `FILES_BUILDABLE` corresponds to your installation directory (e.g. `CMAKE_INSTALL_PREFIX` if you self-compiled), `FILES_THUMBS` is the directory where the thumbnailer dll is located and `FILES_DEPS` is the folder you created with the MSVC redistributable files in it. `FILES_DEPS` is not needed if the installer is created from a conda bundle so it is not set by default. These can be set via /D argument for `makensis.exe` or by editing *Settings.nsh*.
-```nsis
-!ifndef FILES_BUILDABLE
-    !define FILES_BUILDABLE "${__FILEDIR__}\Buildable"
-!endif
-!ifndef FILES_THUMBS
-    !define FILES_THUMBS "${__FILEDIR__}\thumbnail"
-!endif
+### 1. Install NSIS
 
-#!define FILES_DEPS "${__FILEDIR__}\MSVC_Redist"
+1. Install NSIS 3.x from https://nsis.sourceforge.io/Download
+2. Download and install the **Large strings** special build:
+   https://nsis.sourceforge.io/Special_Builds#Large_strings
+   Copy the files into your NSIS installation folder.
+3. (Optional) Download the **Advanced logging** special build:
+   https://nsis.sourceforge.io/Special_Builds#Advanced_logging
+   If not installed, the `LogSet on` line in `setup/install.nsh` must be commented out.
+4. Download and install the **nsProcess** plugin (Unicode version):
+   https://nsis.sourceforge.io/NsProcess_plugin
+
+### 2. Build Buildable from Source (using Pixi)
+
+From the repo root:
+
+```bash
+pixi run initialize
+pixi run configure-release
+pixi run build-release
+pixi run install-release
 ```
-4. Ensure the Buildable files are in place. Here you have two options:
-   * If you are working from an already-compiled version of Buildable provided to you by an outside source: in this case, simply ensure that `FILES_BUILDABLE` is set to the directory containing those files.
-   * If you compiled Buildable on your own. Then:
-       * Copy into the installation folder the file *Delete.bat* that is part of the installer
-       * open a command line in Windows and change to the folder
-       * run the command</br>
-        `Delete.bat`
-       * (These steps assure that the installer only contains files users need. Moreover it assures that the
-       overall files size is below 2 GB and we can use the most compact compression for the installer.)
-5. Right-click on the file *Buildable-installer.nsi* and choose **Compile NSIS script**
-   to compile the installer. You can also run from command line to specify some settings
+
+> **Note:** On Windows, the build requires VS 2022 Build Tools (MSVC v143). If you
+> also have VS 2025 installed, you may need to explicitly set the compiler:
+> ```bash
+> pixi run configure-release \
+>   -DCMAKE_C_COMPILER="C:/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/VC/Tools/MSVC/14.44.35207/bin/Hostx64/x64/cl.exe" \
+>   -DCMAKE_CXX_COMPILER="C:/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/VC/Tools/MSVC/14.44.35207/bin/Hostx64/x64/cl.exe" \
+>   -DCMAKE_GENERATOR_PLATFORM=""
+> ```
+
+> **Note:** If SWIG fails during configure, conda-forge's swig package on Windows
+> may be missing `.swg` library files. Install SWIG via `choco install swig` and
+> copy the Lib folder contents to `.pixi/envs/default/Library/bin/Lib/`.
+
+## Generate version.nsh
+
+The installer needs a `version.nsh` file with version defines. Generate it before
+building the installer:
+
 ```cmd
-%your_nsis_path%\makensis.exe /D'FILES_BUILDABLE="D:\some\path\Buildable"' /D'FILES_DEPS="${__FILEDIR__}\MSVC_Redist" /D'ExeFile="my-Buildable-installer.exe"' Buildable-installer.nsi
+cd package\WindowsInstaller
+.pixi\envs\default\Library\bin\FreeCADCmd.exe --safe-mode write_version_nsh.py
 ```
 
+This creates `version.nsh` with `APP_VERSION_MAJOR`, `APP_VERSION_MINOR`,
+`APP_VERSION_PATCH`, and `APP_VERSION_REVISION`.
 
-NOTE: For test builds of the installer you can turn off compression. This speeds up
-the build time for the installer a lot but increases its file size. The compression
-is turned off by commenting the line</br>
-`SetCompressor /SOLID lzma`</br>
-in the file *Settings.nsh* or by defining `FC_TEST_BUILD` in command line
+If you already have `version.nsh`, you can skip generation by passing `/DFC_SKIP_VERSION_GEN`
+to makensis.
+
+## Build the Installer
+
+From the repo root, run:
+
 ```cmd
-%your_nsis_path%\makensis.exe [OPTIONS] /DFC_TEST_BUILD Buildable-installer.nsi
+cd package\WindowsInstaller
+"C:\Program Files (x86)\NSIS\makensis.exe" /DFC_SKIP_VERSION_GEN /DFC_TEST_BUILD "/DFILES_BUILDABLE=C:\path\to\Buildable\.pixi\envs\default\Library" Buildable-installer.nsi
 ```
+
+**Parameters:**
+
+| Flag | Description |
+|------|-------------|
+| `/DFILES_BUILDABLE=<path>` | Path to the installed Buildable files (the pixi Library dir) |
+| `/DFC_SKIP_VERSION_GEN` | Skip auto-generating `version.nsh` (use pre-generated file) |
+| `/DFC_TEST_BUILD` | Disable compression for faster builds (larger output) |
+| `/DExeFile=<name>` | Custom output filename for the installer exe |
+
+> **Bash/MSYS2 users:** Use `//D` instead of `/D` to prevent path interpretation.
+> ```bash
+> "C:/Program Files (x86)/NSIS/makensis.exe" //DFC_SKIP_VERSION_GEN //DFC_TEST_BUILD "//DFILES_BUILDABLE=C:\path\to\.pixi\envs\default\Library" Buildable-installer.nsi
+> ```
+
+The output installer will be created in the `package/WindowsInstaller/` directory,
+named like `Buildable_1.2.0-Windows-x86_64-installer-1.exe`.
+
+## Quick Reference (Full Pipeline)
+
+```bash
+# 1. Build
+pixi run initialize
+pixi run configure-release
+pixi run build-release
+pixi run install-release
+
+# 2. Generate version.nsh
+cd package/WindowsInstaller
+../../.pixi/envs/default/Library/bin/FreeCADCmd.exe --safe-mode write_version_nsh.py
+
+# 3. Build installer
+"C:/Program Files (x86)/NSIS/makensis.exe" //DFC_SKIP_VERSION_GEN "//DFILES_BUILDABLE=C:/Users/$USER/Desktop/Buildable/.pixi/envs/default/Library" Buildable-installer.nsi
+```
+
+## Settings
+
+Version strings and paths can be edited in `Settings.nsh`:
+
+- `APP_VERSION_EMERGENCY` — suffix for emergency releases (e.g. `"RC1"`)
+- `APP_VERSION_BUILD` — build number, increment for re-uploads of same version
+- `FILES_BUILDABLE` — path to installed Buildable files
+- `FILES_THUMBS` — path to thumbnailer DLL
+- `FILES_DEPS` — path to MSVC redistributable DLLs (not needed for conda builds)

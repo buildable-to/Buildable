@@ -25,7 +25,7 @@ Section -ProgramFiles SecProgramFiles
   # turn on logging
   # Note that this can first be done here since the log file is written to $INSTDIR
   # to $INSTDIR must have a valid path before logging can be turned on
-  LogSet on
+  # LogSet on  # Requires NSIS Advanced Logging build
 
   # Install and register the core Buildable files
   

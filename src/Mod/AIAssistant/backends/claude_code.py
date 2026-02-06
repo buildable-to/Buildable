@@ -19,25 +19,111 @@ from typing import Optional, List, Dict
 import FreeCAD
 
 
-def _get_claude_command() -> str:
-    """Get the correct claude command for the current platform.
+def _get_claude_command() -> list:
+    """Get the command to invoke Claude Code CLI.
 
-    On Windows with npm install, the command is 'claude.cmd'.
-    On Linux/macOS or Windows native install, it's 'claude'.
+    On Windows, .cmd/.bat files require cmd.exe to execute, and cmd.exe
+    ALWAYS creates a visible console window — no combination of
+    CREATE_NO_WINDOW or STARTUPINFO flags can reliably prevent it.
+    The only reliable fix is to resolve node.exe + cli.js and invoke
+    them directly, completely bypassing cmd.exe.
+
+    Uses 4 independent lookup strategies to find node.exe and cli.js,
+    ensuring it works regardless of how Node.js/Claude were installed
+    or whether Buildable was launched from a terminal or desktop shortcut.
+
+    Returns:
+        A list of command parts (e.g. ["node.exe", "cli.js"] or ["claude"]).
     """
-    if sys.platform == "win32":
-        # Try to find claude in PATH
-        claude_path = shutil.which("claude")
-        if claude_path:
-            return claude_path
-        # Try claude.cmd (npm global install on Windows)
-        claude_cmd = shutil.which("claude.cmd")
-        if claude_cmd:
-            return claude_cmd
-        # Fallback - let subprocess handle it
-        return "claude"
-    else:
-        return "claude"
+    if sys.platform != "win32":
+        return ["claude"]
+
+    # --- Step 1: Find cli.js ---
+    cli_js = None
+
+    # 1a. Resolve via claude.cmd / claude in PATH
+    for name in ("claude.cmd", "claude"):
+        found = shutil.which(name)
+        if found:
+            candidate = Path(found).parent / "node_modules" / "@anthropic-ai" / "claude-code" / "cli.js"
+            if candidate.exists():
+                cli_js = candidate
+                break
+
+    # 1b. Try %APPDATA%\npm — npm's guaranteed global install directory on Windows
+    if not cli_js:
+        appdata = os.environ.get("APPDATA", "")
+        if appdata:
+            candidate = Path(appdata) / "npm" / "node_modules" / "@anthropic-ai" / "claude-code" / "cli.js"
+            if candidate.exists():
+                cli_js = candidate
+
+    # 1c. Try USERPROFILE fallback (covers edge case where APPDATA is unset)
+    if not cli_js:
+        userprofile = os.environ.get("USERPROFILE", "")
+        if userprofile:
+            candidate = Path(userprofile) / "AppData" / "Roaming" / "npm" / "node_modules" / "@anthropic-ai" / "claude-code" / "cli.js"
+            if candidate.exists():
+                cli_js = candidate
+
+    if not cli_js:
+        FreeCAD.Console.PrintWarning(
+            "AIAssistant: Could not find claude-code cli.js — "
+            "a CMD window may appear. Install with: npm install -g @anthropic-ai/claude-code\n"
+        )
+        return ["claude"]
+
+    # --- Step 2: Find node.exe ---
+    node_exe = None
+
+    # 2a. Check the npm directory (some setups bundle node.exe there)
+    npm_dir = cli_js.parents[3]  # cli.js -> claude-code -> @anthropic-ai -> node_modules -> npm_dir
+    candidate = npm_dir / "node.exe"
+    if candidate.exists():
+        node_exe = str(candidate)
+
+    # 2b. Try PATH
+    if not node_exe:
+        found = shutil.which("node.exe") or shutil.which("node")
+        if found:
+            node_exe = found
+
+    # 2c. Try well-known Node.js install locations
+    if not node_exe:
+        for node_dir in [Path(r"C:\Program Files\nodejs"), Path(r"C:\Program Files (x86)\nodejs")]:
+            candidate = node_dir / "node.exe"
+            if candidate.exists():
+                node_exe = str(candidate)
+                break
+
+    # 2d. Try Windows registry (Node.js installer registers its path here)
+    if not node_exe:
+        try:
+            import winreg
+            for hive in (winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER):
+                try:
+                    with winreg.OpenKey(hive, r"SOFTWARE\Node.js") as key:
+                        install_path = winreg.QueryValueEx(key, "InstallPath")[0]
+                        candidate = Path(install_path) / "node.exe"
+                        if candidate.exists():
+                            node_exe = str(candidate)
+                            break
+                except OSError:
+                    pass
+        except ImportError:
+            pass
+
+    if not node_exe:
+        FreeCAD.Console.PrintWarning(
+            "AIAssistant: Could not find node.exe — "
+            "a CMD window may appear. Install Node.js from https://nodejs.org/\n"
+        )
+        return ["claude"]
+
+    FreeCAD.Console.PrintMessage(
+        f"AIAssistant: Resolved node={node_exe}, cli.js={cli_js}\n"
+    )
+    return [str(node_exe), str(cli_js)]
 
 
 # System prompt template - filled at runtime with workbench-specific info
@@ -301,7 +387,7 @@ class ClaudeCodeBackend:
         # Build command - use stream-json for tool visibility
         # Note: stream-json requires --verbose when used with -p (print mode)
         claude_cmd = _get_claude_command()
-        cmd = [claude_cmd, "-p", "--verbose", "--output-format", "stream-json"]
+        cmd = claude_cmd + ["-p", "--verbose", "--output-format", "stream-json"]
 
         # Allow Edit and Write tools for direct source.py modification
         cmd.extend(["--allowedTools", "Read,Glob,Grep,Edit,Write"])
@@ -348,6 +434,15 @@ class ClaudeCodeBackend:
         start_time = time.time()
         try:
             # Use Popen for streaming NDJSON output
+            # Hide console window on Windows
+            kwargs = {}
+            if sys.platform == "win32":
+                kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+                si = subprocess.STARTUPINFO()
+                si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                si.wShowWindow = 0  # SW_HIDE
+                kwargs["startupinfo"] = si
+
             process = subprocess.Popen(
                 cmd,
                 stdin=subprocess.PIPE,
@@ -355,7 +450,8 @@ class ClaudeCodeBackend:
                 stderr=subprocess.PIPE,
                 text=True,
                 encoding="utf-8",  # Explicit UTF-8 for Windows compatibility
-                cwd=cwd
+                cwd=cwd,
+                **kwargs
             )
 
             # Write prompt to stdin and close
