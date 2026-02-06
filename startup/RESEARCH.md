@@ -10,6 +10,14 @@ Buildable is a fork of FreeCAD building "Cursor for CAD" — an AI-native parame
 - **Website**: buildable.to
 - **Created**: December 2025, active development since January 2026
 
+### Founding Team
+
+- **Luka Lortkipanidze** — Technical lead. ML/Data Engineering background. Ex-Tether. Co-founded Bitpulse (BitpulseAI). Builds the AI layer and core platform.
+- **Otar Donadze** — Business lead. Business major. Worked with Luka at Bitpulse for 1.5 years. Handles strategy, go-to-market, and operations.
+- **Nikoloz Lortkipanidze** — Domain expert. Civil Engineering major. Works as a constructor. CTO of the Georgian Precast Association (umbrella org combining multiple precast companies in Georgia). Brings real-world construction/engineering workflows and industry connections.
+
+The team covers the three critical bases: **AI/engineering** (Luka), **business** (Otar), and **domain expertise with industry access** (Nikoloz). Nikoloz's position at the Georgian Precast Association provides a direct channel to commercial customers — a built-in distribution advantage that Ondsel never had.
+
 Fun fact: Cursor's founders originally spent almost a year building AI autocomplete for mechanical engineering CAD software before pivoting to code editing because the market was "stagnant." Three years later, CAD is one of the hottest "Cursor for X" domains.
 
 ---
