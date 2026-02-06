@@ -10,6 +10,7 @@ Cursor for CAD. A fork of FreeCAD with an AI-native design experience.
 |-----|-------------|
 | [RESEARCH.md](RESEARCH.md) | Competitive landscape, market sizing, Cursor playbook, FreeCAD platform analysis, strategic questions |
 | [TEAM_CRITIQUE.md](TEAM_CRITIQUE.md) | Honest assessment of team gaps, missing roles, counterarguments, and prioritized recommendations |
+| [CUSTOMER_DISCOVERY.md](CUSTOMER_DISCOVERY.md) | Interview guide for precast company founders — questions, what to listen for, call template |
 
 ---
 
