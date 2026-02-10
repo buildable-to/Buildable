@@ -4,6 +4,8 @@
 
 This document synthesizes deep research on Y Combinator startup lessons, vertical SaaS strategy, the "Cursor for X" playbook, and construction/precast market dynamics — all applied to Buildable's strategic positioning.
 
+> **Key insight from customer discovery:** One of Georgia's biggest precast companies told us their design/drawing phase takes **2 months** while actual physical construction takes only **15 days**. They spend **4x longer on paper than on concrete.** The bottleneck in precast isn't building — it's the paperwork before building. This is the problem Buildable solves.
+
 ---
 
 ## Table of Contents
@@ -574,7 +576,7 @@ Published tiers. Enterprise pricing ($1,000+/user/month or custom). Annual contr
 | Factor | Evidence |
 |--------|----------|
 | **The work is AI-automatable** | Template-driven, rules-based, repetitive but requires domain expertise |
-| **Pain is quantified** | 2 people × 2 months per project, 60% of project time |
+| **Pain is quantified** | 2 months design vs. 15 days construction — validated by one of Georgia's biggest precast companies |
 | **Buyers exist and are reachable** | Countable buyer base (~300-500 plants per region), industry associations as channels |
 | **Budget exists** | $30K/year on drawing production in Georgia, $100K+ internationally |
 | **Technology is ready** | Claude/GPT-4+ era models handle code generation well, source.py architecture bridges CAD→code gap |
@@ -643,9 +645,13 @@ Published tiers. Enterprise pricing ($1,000+/user/month or custom). Annual contr
 
 ### The Fundraising Narrative (When Ready)
 
-> "Precast concrete is a $150B market where structural engineers spend 2 months producing drawings that follow the exact same templates for every project. We built AI that generates those drawings in minutes — with correct rebar detailing, Eurocode compliance, and professional BBS tables. We already have [X] paying customers in [Y] countries, saving them [Z] hours per project. We're raising to expand our element library and enter the Turkish and Middle Eastern markets, where precast is booming and construction companies are desperate for efficiency tools."
+> "One of Georgia's biggest precast companies told us something that stopped us in our tracks: their design and drawing phase takes **2 months**. Actual construction? **15 days.** They spend 4x longer on paper than on concrete — and the drawings are the same templates filled in with different parameters every single time.
+>
+> We built AI that generates those drawings in minutes. Describe your element — dimensions, rebar, concrete class — and Buildable produces complete construction drawings with correct Eurocode detailing, bar bending schedules, and material summaries. One parameter change? Everything regenerates in seconds, not days.
+>
+> We already have [X] paying customers in [Y] countries, saving them [Z] hours per project. We're raising to expand our element library and enter the Turkish and Middle Eastern markets, where precast is booming and construction companies are desperate for efficiency tools."
 
-Lead with Nikoloz's precast association as proof of commercial demand. Lead with time savings data from real projects. Lead with the demo video.
+Lead with the **2 months vs. 15 days** — it's a visceral, unforgettable data point. Lead with Nikoloz's precast association as proof of commercial demand. Lead with the demo video.
 
 Don't lead with "Cursor for CAD." Don't lead with the technology. Don't lead with TAM slide decks. Lead with the pain, the proof, and the product.
 
