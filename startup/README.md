@@ -14,6 +14,7 @@ Cursor for CAD. A fork of FreeCAD with an AI-native design experience.
 | [PRECAST_PLAN.md](PRECAST_PLAN.md) | Product plan — precast vertical focus, phased roadmap, technical architecture, GTM, pricing |
 | [DEMO_VIDEO.md](DEMO_VIDEO.md) | Demo video plan — 3 concepts (30s/60s/3min), storyboards, visual style, recording checklist, distribution |
 | [STRATEGY.md](STRATEGY.md) | Comprehensive strategy — YC lessons, vertical SaaS thesis, wedge strategy, Cursor playbook, Ondsel lessons, precast market, pricing, 12-month plan |
+| [BUSINESS_MODEL.md](BUSINESS_MODEL.md) | Business model — B2B SaaS pricing (Free/Pro/Enterprise), enterprise portal design, revenue layer cake, projections, geographic pricing |
 
 ---
 
