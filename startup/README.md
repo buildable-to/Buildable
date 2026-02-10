@@ -1,6 +1,6 @@
 # Buildable — Startup Docs
 
-AI-powered structural detailing for precast concrete. A fork of FreeCAD with an AI-native design experience.
+AI-powered structural detailing for precast concrete. Built on open-source CAD with an AI-native design experience.
 
 ---
 
@@ -20,7 +20,7 @@ AI-powered structural detailing for precast concrete. A fork of FreeCAD with an 
 
 ## Quick Facts
 
-- **What**: Fork of FreeCAD + AI assistant that generates complete precast structural drawings from natural language
+- **What**: AI-powered CAD that generates complete precast structural drawings from natural language (built on FreeCAD + OpenCASCADE)
 - **Positioning**: AI-powered structural detailing for precast concrete — vertical-first, not generic CAD
 - **Playbook**: Same approach as Cursor (fork open-source, add deep AI) but targeting a specific vertical
 - **Architecture**: Code-as-source-of-truth — Claude Code reads/edits `source.py`, FreeCAD executes it

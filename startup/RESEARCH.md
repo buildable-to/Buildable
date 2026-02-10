@@ -4,7 +4,7 @@
 
 ## What is Buildable?
 
-Buildable is a fork of FreeCAD building "Cursor for CAD" — an AI-native parametric 3D modeler where users describe designs in natural language and Claude Code edits a Python `source.py` that defines the design.
+Buildable is an AI-native parametric 3D modeler for structural engineering. Engineers describe designs in natural language and Claude Code edits a Python `source.py` that defines the design. Built on FreeCAD and the OpenCASCADE geometry kernel.
 
 - **GitHub**: github.com/buildable-to/Buildable
 - **Website**: buildable.to
