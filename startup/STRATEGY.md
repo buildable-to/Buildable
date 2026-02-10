@@ -530,14 +530,23 @@ Western Europe (largest precast market), then US. May need local sales presence.
 
 **The core tension:** Georgian precast companies budget $500-5,000/year for software. US/European companies budget $20,000-100,000+. You can't anchor to either extreme.
 
+**Two tiers, two buyers** (see [BUSINESS_MODEL.md](BUSINESS_MODEL.md) for full details):
+
+- **Pro** — $400/month per company (up to 5 users). The engineer's tool. AI detailing, unlimited exports, full element library.
+- **Enterprise** — $2,000-3,000/month per factory. The owner/CTO's platform. Includes the Buildable Portal (element library, templates, project dashboard, standards config, analytics).
+
+**Why per company/per factory (not per seat):** Per-seat pricing discourages adoption — companies minimize licenses to save money. Per-factory pricing encourages everyone at a plant to use it, and correlates with value (more factories = more projects = more value).
+
 **Phase 1 (0-10 customers, Georgia):**
-Design partner approach. First 3-5 free, next 5-10 pay $100-300/month. You're learning, not optimizing revenue.
+Design partner approach. First 3-5 free, next 5-10 pay $200-300/month (regional pricing). You're learning, not optimizing revenue.
 
 **Phase 2 (10-50 customers, regional expansion):**
-Value-based tiers (per-seat or per-project). List price set for aspirational market ($500+/user/month), with non-public "regional partner discounts."
+Published Pro tier at $400/month. Regional discounts for Georgia/Turkey through direct sales (never published). First Enterprise pilots at $1,000-1,500/factory.
 
 **Phase 3 (50+ customers, global):**
-Published tiers. Enterprise pricing ($1,000+/user/month or custom). Annual contracts with upfront discounts.
+Full published pricing. Enterprise at $2,500-3,000+/factory. Annual contracts with 2-month discount for prepayment.
+
+**Geographic pricing:** One public price (Western/US). Regional customers get non-public "partner discounts." Georgia $200-300/mo Pro, Turkey $300-400, Middle East $500-700, Europe/US $500-800. See [BUSINESS_MODEL.md](BUSINESS_MODEL.md) for full breakdown.
 
 **Pricing Principles:**
 

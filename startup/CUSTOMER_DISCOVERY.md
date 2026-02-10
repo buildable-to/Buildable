@@ -1,6 +1,6 @@
 # Customer Discovery — Precast Company Interviews
 
-*Last updated: 2026-02-06*
+*Last updated: 2026-02-10*
 
 ## Ground Rules (The Mom Test)
 

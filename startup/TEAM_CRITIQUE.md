@@ -1,6 +1,6 @@
 # Team Critique — Honest Assessment
 
-*Last updated: 2026-02-06*
+*Last updated: 2026-02-10*
 
 ## Current Team
 
@@ -87,7 +87,7 @@ Otar's background is in business, but building a developer/engineering tools com
 | Mechanical engineering domain | Advisor from mainstream mech-E (not just construction) to validate PMF | High |
 | Community building | Someone to build contributor community (FreeCAD forum, YouTube, Discord) | Medium |
 | Enterprise sales | Someone who has sold $10K+/yr software to engineering teams | Medium |
-| Model-agnostic AI layer | Architecture supporting multiple LLM backends, not just Claude | Medium |
+| Model-agnostic AI layer | Architecture supporting multiple LLM backends, not just Claude — revisit after revenue | Low |
 
 ---
 
@@ -106,7 +106,7 @@ These are real, not just copium:
 
 ## Recommendations
 
-1. **Immediately**: Make the AI layer model-agnostic (add HTTP backend support for OpenAI, local models)
+1. **Immediately**: Ship with Claude Code — it works, don't abstract prematurely. Revisit model-agnostic architecture once there's revenue and a clear need.
 2. **Within 1 month**: Ship a public demo video — traction > pedigree for early fundraising
 3. **Within 3 months**: Find a C++/CAD technical co-founder or contractor (FreeCAD forum is the best recruiting ground)
 4. **For fundraising**: Lead with Nikoloz's precast association as proof of commercial demand, not just the technology

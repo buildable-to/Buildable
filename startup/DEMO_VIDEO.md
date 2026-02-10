@@ -1,6 +1,6 @@
 # Demo Video Plan
 
-*Last updated: 2026-02-06*
+*Last updated: 2026-02-10*
 
 ## Video Strategy
 
@@ -83,10 +83,10 @@ Three videos, in order of priority. Each builds on the previous — same footage
 [0-5s]   OPENING:
           Slow flip through pages of a real structural drawing set
           (use the ALTA warehouse PDF or similar)
-          Text overlay: "Structural engineers spend 2 months
-                         producing these drawings."
+          Text overlay: "Designing these drawings takes 2 months.
+                         Building the actual structure? 15 days."
 
-[5-10s]  Text overlay: "What if it took 10 minutes?"
+[5-10s]  Text overlay: "What if the drawings took 10 minutes?"
           TRANSITION: Fade to Buildable interface, empty project
 
 [10-15s] CHAT PANEL — engineer types:
@@ -168,8 +168,9 @@ Three videos, in order of priority. Each builds on the previous — same footage
           Show the ALTA warehouse 3D render (from PDF cover page)
           Text: "This is a real precast warehouse project.
                  84m x 48m. Steel frame with precast elements.
-                 The structural drawings took 2 months to produce."
-          Text: "Let's rebuild it in Buildable."
+                 The structural drawings took 2 months.
+                 Actual construction? 15 days."
+          Text: "Let's rebuild the drawings in Buildable."
 
 [15-45s] PROJECT SETUP:
           - Create new project in Buildable
@@ -206,7 +207,8 @@ Three videos, in order of priority. Each builds on the previous — same footage
            RIGHT: Original ALTA PDF (flip through pages)
            They match. Same layout. Same level of detail.
            Same BBS tables. Same section details.
-           Text: "15 minutes vs 2 months."
+           Text: "15 minutes vs 2 months.
+                  Now construction is the bottleneck, not paper."
 
 [180-210s] THE CHANGE DEMO:
            - "The client just increased the building by 2 bays.

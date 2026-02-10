@@ -1,10 +1,10 @@
 # Buildable for Precast — Product Plan
 
-*Last updated: 2026-02-06*
+*Last updated: 2026-02-10*
 
 ## The Problem
 
-Precast concrete companies spend **~60% of total project time** on the design/drawing phase. The structural calculations are done relatively fast, but producing detailed construction drawings is a "robotic" manual process that takes **2 people ~2 months** per project.
+Precast concrete companies spend **~60% of total project time** on the design/drawing phase. One of Georgia's biggest precast companies told us: design and drawings take **2 months**, while actual physical construction takes only **15 days**. They spend 4x longer on paper than on concrete. Producing detailed construction drawings is a "robotic" manual process that takes **2 people ~2 months** per project.
 
 The drawings follow **standardized templates** — plan views, cross-sections, rebar details, bar bending schedules — filled in with different parameters for each element. The work is rules-based (follow Eurocode, apply standard detailing), not creative.
 
@@ -250,21 +250,21 @@ When working on precast projects:
 ### Phase 2: Paid Pilots in Georgia (Months 4-6)
 
 - **Target**: 10 precast companies in Georgia
-- **Pricing**: $200-500/month (affordable for Georgian market, validates willingness to pay)
+- **Pricing**: Pro at $200-300/month per company (regional pricing — see [BUSINESS_MODEL.md](BUSINESS_MODEL.md))
 - **Offer**: Full precast detailing — foundations, columns, beams, walls
 - **Goal**: $2K-5K MRR, 5+ paying customers, case studies with before/after timelines
 
 ### Phase 3: Regional Expansion (Months 7-12)
 
 - **Target**: Turkey, Azerbaijan, Kazakhstan, UAE — nearby markets with construction booms, similar standards (Eurocode-based)
-- **Pricing**: $500-1000/month
+- **Pricing**: Pro at $300-400/month, first Enterprise pilots at $1,000-1,500/factory
 - **Localization**: Title block templates per country, local code variants
-- **Goal**: $20K+ MRR
+- **Goal**: $10K+ MRR
 
 ### Phase 4: Global Precast Market (Year 2)
 
 - **Target**: Precast companies worldwide (Europe, Middle East, Southeast Asia)
-- **Pricing**: $1000-2000/month (still 5-10x cheaper than hiring a drafter)
+- **Pricing**: Pro at $500-800/month, Enterprise at $2,500-3,000+/factory (see [BUSINESS_MODEL.md](BUSINESS_MODEL.md))
 - **Expand**: Add ACI 318 (US standard), BS 8110 (UK), IS 456 (India)
 - **Goal**: $100K+ MRR → fundraise
 
@@ -280,19 +280,21 @@ Precast is the wedge. Once established:
 
 ## Pricing Logic
 
+See [BUSINESS_MODEL.md](BUSINESS_MODEL.md) for the full pricing model (Pro/Enterprise tiers, geographic pricing, enterprise portal).
+
 **Current cost of drawing production:**
 - 2 engineers × 2 months × ~$1,500/month (Georgian salary) = **$6,000 per project**
 - A company doing 5 projects/year spends **$30,000/year** on drawing production
 
-**Buildable target:**
+**Buildable Pro target (Georgia):**
 - Save 70% of drawing time → save ~$21,000/year
-- Charge $300-500/month ($3,600-6,000/year)
-- **ROI: 3.5-5.8x** — easy sell
+- Charge $200-300/month ($2,400-3,600/year)
+- **ROI: 5.8-8.75x** — easy sell
 
 **For international markets:**
 - Engineering salaries are 3-5x higher ($4,000-8,000/month)
 - Same time savings → $100K+ annual savings
-- Charge $1,000-2,000/month → still obvious ROI
+- Pro at $500-800/month, Enterprise at $2,500-3,000+/factory → still obvious ROI
 
 ---
 
@@ -315,7 +317,7 @@ Precast is the wedge. Once established:
 |------|------------|
 | Engineers don't trust AI-generated drawings | Preview + review workflow. Engineer always approves. Start with simple elements. |
 | FreeCAD TechDraw output quality not professional enough | Invest in template polish. Export to DWG for final touches if needed. |
-| Market too small (Georgian precast) | Georgia is the beachhead, not the market. Precast is $155B globally. |
+| Market too small (Georgian precast) | Georgia is the beachhead, not the market. Precast is $143-155B globally. |
 | Autodesk/Tekla adds AI detailing | They're focused on general CAD, not precast-specific workflows. Vertical focus wins. |
 | Rebar detailing errors could cause structural failures | Always require engineer review. Add code compliance checks. Never position as replacing the engineer. |
 | Claude Code dependency | Build model-agnostic backend (already have HTTP backend). Precast element library works regardless of LLM. |

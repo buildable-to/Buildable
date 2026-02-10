@@ -1,6 +1,6 @@
 # Buildable — Startup Docs
 
-Cursor for CAD. A fork of FreeCAD with an AI-native design experience.
+AI-powered structural detailing for precast concrete. A fork of FreeCAD with an AI-native design experience.
 
 ---
 
@@ -20,12 +20,14 @@ Cursor for CAD. A fork of FreeCAD with an AI-native design experience.
 
 ## Quick Facts
 
-- **What**: Fork of FreeCAD + AI assistant that edits Python source code to create 3D designs
-- **Positioning**: "Cursor for CAD" — same playbook as Cursor (fork of VS Code)
+- **What**: Fork of FreeCAD + AI assistant that generates complete precast structural drawings from natural language
+- **Positioning**: AI-powered structural detailing for precast concrete — vertical-first, not generic CAD
+- **Playbook**: Same approach as Cursor (fork open-source, add deep AI) but targeting a specific vertical
 - **Architecture**: Code-as-source-of-truth — Claude Code reads/edits `source.py`, FreeCAD executes it
-- **Team**: Luka (tech), Otar (business), Nikoloz (domain/construction industry)
+- **Team**: Luka (tech), Otar (business), Nikoloz (domain/CTO of Georgian Precast Association)
 - **Stage**: Pre-launch, building since Dec 2025
-- **Market**: CAD software $12-23B, broader engineering software $48.8B → $126.1B by 2030
+- **Key insight**: One of Georgia's biggest precast companies: design/drawings take **2 months**, actual construction takes **15 days** — 4x longer on paper than on concrete
+- **Market**: Precast concrete $143-155B globally; CAD software $12-23B; broader engineering software $48.8B → $126.1B by 2030
 
 ## Key Competitors
 
