@@ -289,7 +289,7 @@ class AIAssistantDockWidget(QtWidgets.QDockWidget):
 
         self.self_review_action = menu.addAction("Self-review before showing")
         self.self_review_action.setCheckable(True)
-        self.self_review_action.setChecked(True)
+        self.self_review_action.setChecked(False)
         self.self_review_action.setToolTip(
             "Claude reviews the result and can fix issues before showing to you"
         )
