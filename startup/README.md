@@ -23,7 +23,7 @@ AI-powered structural detailing for precast concrete. Built on open-source CAD w
 - **What**: AI-powered CAD that generates complete precast structural drawings from natural language (built on FreeCAD + OpenCASCADE)
 - **Positioning**: AI-powered structural detailing for precast concrete — vertical-first, not generic CAD
 - **Playbook**: Same approach as Cursor (fork open-source, add deep AI) but targeting a specific vertical
-- **Architecture**: Code-as-source-of-truth — Claude Code reads/edits `source.py`, FreeCAD executes it
+- **Architecture**: Code-as-source-of-truth — Claude Code reads/edits `model.py`, FreeCAD executes it
 - **Team**: Luka (tech), Otar (business), Nikoloz (domain/CTO of Georgian Precast Association)
 - **Stage**: Pre-launch, building since Dec 2025
 - **Key insight**: One of Georgia's biggest precast companies: design/drawings take **2 months**, actual construction takes **15 days** — 4x longer on paper than on concrete

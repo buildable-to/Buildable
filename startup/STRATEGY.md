@@ -294,7 +294,7 @@ Sam Altman's advice: **Focus on being the only one doing what you do. Figure out
 But investors in 2026 want specific defensibility:
 
 - **Data Flywheel** — Product generates unique, non-public data that improves the model over time. For Buildable: every precast element generated, every engineer correction, every Eurocode validation creates proprietary training data.
-- **Workflow Integration** — Your product is so embedded in daily operations (CRM, billing, production) that switching costs are prohibitive. For Buildable: once source.py contains a company's entire element library, switching costs are enormous.
+- **Workflow Integration** — Your product is so embedded in daily operations (CRM, billing, production) that switching costs are prohibitive. For Buildable: once model.py contains a company's entire element library, switching costs are enormous.
 - **Process Power** — The unsexy edge-case engineering (thousands of rebar detailing rules, Georgian title block formats, BBS table standards) that takes years to accumulate.
 
 ---
@@ -313,7 +313,7 @@ Anysphere was founded in 2022 by four MIT friends: Michael Truell, Sualeh Asif, 
 3. **Text vs. spatial.** Code is text (LLMs are text machines). CAD geometry is spatial/visual.
 4. **Market timing.** GPT-3.5/4 made AI-for-code about to break out. CAD was further away.
 
-**The critical insight for Buildable:** The Cursor founders didn't abandon CAD because it was a bad market — they abandoned it because the technology wasn't ready. Your `source.py` architecture bridges this gap: **you convert the CAD problem into a code problem**, which is exactly where LLMs excel. This is a fundamentally different approach than what they tried in 2022.
+**The critical insight for Buildable:** The Cursor founders didn't abandon CAD because it was a bad market — they abandoned it because the technology wasn't ready. Your `model.py` architecture bridges this gap: **you convert the CAD problem into a code problem**, which is exactly where LLMs excel. This is a fundamentally different approach than what they tried in 2022.
 
 ### Cursor's Key Decisions
 
@@ -391,7 +391,7 @@ Ondsel's mistake was incremental improvement. Buildable's AI-first approach is a
 Ondsel tried to sell to existing FreeCAD users. Buildable should target people who **currently use AutoCAD** for precast detailing (and hate it), or who can't afford Tekla ($10K-20K/seat/year). You're expanding the market, not converting it.
 
 **3. AI is the moat, not the distribution.**
-Ondsel had no technical moat. Buildable's AI integration, precast element library, Eurocode knowledge, and source.py architecture are much harder to replicate.
+Ondsel had no technical moat. Buildable's AI integration, precast element library, Eurocode knowledge, and model.py architecture are much harder to replicate.
 
 **4. Keep your AI layer proprietary.**
 Contribute bug fixes and UX improvements upstream (be a good citizen). But the AI assistant, precast library, and vertical-specific features are your competitive advantage. Don't give those away.
@@ -588,7 +588,7 @@ Full published pricing. Enterprise at $2,500-3,000+/factory. Annual contracts wi
 | **Pain is quantified** | 2 months design vs. 15 days construction — validated by one of Georgia's biggest precast companies |
 | **Buyers exist and are reachable** | Countable buyer base (~300-500 plants per region), industry associations as channels |
 | **Budget exists** | $30K/year on drawing production in Georgia, $100K+ internationally |
-| **Technology is ready** | Claude/GPT-4+ era models handle code generation well, source.py architecture bridges CAD→code gap |
+| **Technology is ready** | Claude/GPT-4+ era models handle code generation well, model.py architecture bridges CAD→code gap |
 | **No incumbent owns this** | Tekla is expensive and doesn't automate; no dominant "precast AI" exists |
 | **Expansion path is clear** | Precast → structural steel → general structural → "Cursor for CAD" |
 

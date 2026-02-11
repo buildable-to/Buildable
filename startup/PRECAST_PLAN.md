@@ -39,7 +39,7 @@ Engineer describes element in Buildable:
 "Foundation F-1, 3200x4200, depth 2350, pedestal 750x750,
  C30/37, bottom Ø12@200 A500c, stirrups Ø12/10@90/200"
                     ↓
-AI edits source.py → FreeCAD generates:
+AI edits model.py → FreeCAD generates:
 ├── 3D model with rebar (inspectable, rotatable)
 ├── TechDraw sheet: plan view + Section 1-1 + Section 2-2
 ├── Bar shape page: each position with dimensions
@@ -63,7 +63,7 @@ Engineer reviews, adjusts → Export DWG/PDF
 - **Time: hours to days**
 
 **In Buildable**: "Change F-1 bottom rebar to Ø16"
-- AI modifies one parameter in source.py
+- AI modifies one parameter in model.py
 - Everything regenerates: drawings, sections, bar shapes, BBS, weights
 - AI self-reviews against Eurocode minimums
 - **Time: seconds**
@@ -163,7 +163,7 @@ src/Mod/AIAssistant/precast/
     └── bar_shapes.svg    # Standard bar shape library
 ```
 
-### How source.py Looks for a Precast Project
+### How model.py Looks for a Precast Project
 
 ```python
 # Buildable AI Source - ALTA Small Warehouse
@@ -217,7 +217,7 @@ The AI assistant system prompt gets precast-specific knowledge:
 
 When working on precast projects:
 
-1. ALWAYS read source.py first to understand existing elements
+1. ALWAYS read model.py first to understand existing elements
 2. Use the precast library classes (PrecastFoundation, PrecastColumn, etc.)
 3. Follow Eurocode 2 for rebar detailing:
    - Minimum cover: 30mm (interior), 40mm (exterior), 50mm (ground contact)

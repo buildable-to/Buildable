@@ -234,7 +234,7 @@ Three videos, in order of priority. Each builds on the previous — same footage
 - [ ] Beam element type
 - [ ] Slab/roof element type (at least visually)
 - [ ] Grid/layout plan generation
-- [ ] Multi-element project in single source.py
+- [ ] Multi-element project in single model.py
 - [ ] Material takeoff summary
 
 ### Production notes
