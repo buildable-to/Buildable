@@ -157,7 +157,7 @@ def _describe_object_lean(obj) -> str:
             val = getattr(obj, prop_name, None)
             if val is not None and hasattr(val, "Value") and val.Value > 0:
                 dim_parts.append(f"{prop_name}={val.Value:.0f}")
-        except Exception:
+        except (AttributeError, RuntimeError):
             pass
 
     # Bounding box fallback for shapes without parametric props
@@ -167,7 +167,7 @@ def _describe_object_lean(obj) -> str:
                 bb = obj.Shape.BoundBox
                 if bb.isValid():
                     parts.append(f"[{bb.XLength:.0f}x{bb.YLength:.0f}x{bb.ZLength:.0f}mm]")
-        except Exception:
+        except (AttributeError, RuntimeError):
             pass
     elif dim_parts:
         parts.append(f"[{', '.join(dim_parts)}mm]")
