@@ -1201,8 +1201,12 @@ Read source.py to understand what went wrong, then fix it."""
             doc = FreeCAD.ActiveDocument
             if doc:
                 # Build list of objects to remove (excluding system objects)
+                # IMPORTANT: Reverse order so children/dependents are deleted before
+                # parents/containers. doc.Objects is in creation order (parents first),
+                # so reversing ensures e.g. TechDraw views are removed before their
+                # DrawPage, preventing SIGSEGV from dangling PropertyLinkList pointers.
                 objects_to_remove = [
-                    obj.Name for obj in doc.Objects
+                    obj.Name for obj in reversed(doc.Objects)
                     if obj.TypeId not in ("App::Origin", "App::Plane", "App::Line")
                 ]
                 FreeCAD.Console.PrintMessage(
@@ -1709,11 +1713,12 @@ If there are PROBLEMS, explain briefly what's wrong and edit source.py to fix th
             # Re-execute source.py
             source_content = SourceManager.read_source()
 
-            # Clear document for clean re-execution
+            # Clear document for clean re-execution (reverse order to avoid
+            # SIGSEGV from dangling links when TechDraw objects are present)
             doc = FreeCAD.ActiveDocument
             if doc:
                 objects_to_remove = [
-                    obj.Name for obj in doc.Objects
+                    obj.Name for obj in reversed(doc.Objects)
                     if obj.TypeId not in ("App::Origin", "App::Plane", "App::Line")
                 ]
                 for obj_name in objects_to_remove:

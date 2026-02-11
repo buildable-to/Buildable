@@ -1028,9 +1028,10 @@ class PreviewManager:
         if not sandbox_doc:
             return (False, f"Sandbox document {session.sandbox_doc_name} not found")
 
-        # Clear existing objects
+        # Clear existing objects (reverse order: children before parents to avoid
+        # SIGSEGV from dangling PropertyLinkList pointers in TechDraw etc.)
         objects_to_remove = [
-            obj.Name for obj in sandbox_doc.Objects
+            obj.Name for obj in reversed(sandbox_doc.Objects)
             if obj.TypeId not in ("App::Origin", "App::Plane", "App::Line")
         ]
         for obj_name in objects_to_remove:
