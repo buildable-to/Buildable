@@ -7,6 +7,7 @@ Cursor-inspired design with blue accent for creation, red for deletion.
 from PySide6 import QtCore, QtWidgets, QtGui
 from typing import List, Dict
 from .. import Theme
+import markdown
 
 # Deletion mode colors
 DELETION_ACCENT = "#ef4444"  # Red-500
@@ -104,9 +105,11 @@ class PreviewWidget(QtWidgets.QFrame):
 
         layout.addLayout(header_layout)
 
-        # Description
+        # Description (rendered as markdown)
         if description:
-            desc_label = QtWidgets.QLabel(description)
+            desc_html = markdown.markdown(description)
+            desc_label = QtWidgets.QLabel(desc_html)
+            desc_label.setTextFormat(QtCore.Qt.RichText)
             desc_label.setWordWrap(True)
             desc_label.setStyleSheet(f"""
                 color: {Theme.COLORS['text_secondary']};
@@ -261,7 +264,14 @@ class PreviewWidget(QtWidgets.QFrame):
         self._fade_anim.setStartValue(0.0)
         self._fade_anim.setEndValue(1.0)
         self._fade_anim.setEasingCurve(QtCore.QEasingCurve.OutCubic)
+        # Remove the graphics effect after animation to avoid Qt6 rendering issues
+        # (buttons can become invisible under QGraphicsOpacityEffect)
+        self._fade_anim.finished.connect(self._clear_opacity_effect)
         self._fade_anim.start()
+
+    def _clear_opacity_effect(self):
+        """Remove opacity effect after fade-in to fix child widget rendering."""
+        self.setGraphicsEffect(None)
 
     def _create_item_row(self, item: Dict) -> QtWidgets.QWidget:
         """Create a row widget for a preview item."""

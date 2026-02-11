@@ -51,6 +51,7 @@ SET(AIAssistant_widgets
     widgets/step_preview.py
     widgets/activity.py
     widgets/context_selection.py
+    widgets/progress_indicator.py
 )
 
 # External integrations

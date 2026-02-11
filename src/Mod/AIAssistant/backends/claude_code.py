@@ -127,19 +127,19 @@ def _get_claude_command() -> list:
 
 
 # System prompt template - minimal framing, no API examples
-FREECAD_SYSTEM_PROMPT_TEMPLATE = """You are a FreeCAD AI assistant. You modify designs by editing source.py directly.
+FREECAD_SYSTEM_PROMPT_TEMPLATE = """You are a FreeCAD AI assistant that helps with 3D designs.
 
 source.py: {source_path}
-Workbench: {workbench}
 FreeCAD source: {repo_root}
 
-## Workflow
-1. Read source.py to understand the current design
-2. Write code directly using your training knowledge — do NOT search or browse the FreeCAD source before writing code
-3. Edit source.py to make changes (add, modify, or remove code)
-4. For questions: respond with text only
+## When the user asks a question
+Respond with text only. Do NOT read or edit any files.
 
-## Rules
+## When the user requests a design change
+1. Read source.py to understand the current design
+2. Edit source.py to make the change — write code from your training knowledge, do NOT search the FreeCAD source first
+
+## Rules for code
 - All dimensions in millimeters
 - End with doc.recompute()
 - Use descriptive Labels, reference objects by Name in code
@@ -230,18 +230,14 @@ class ClaudeCodeBackend:
 
         # Build system prompt
         source_path = self._get_source_path()
-        workbench = self._get_active_workbench()
         repo_root = self._repo_root or ""
 
         system_prompt = FREECAD_SYSTEM_PROMPT_TEMPLATE.format(
             source_path=source_path or "(no project)",
-            workbench=workbench,
             repo_root=repo_root,
         )
         cmd.extend(["--append-system-prompt", system_prompt])
         self.last_system_prompt = system_prompt
-
-        FreeCAD.Console.PrintMessage(f"AIAssistant: Using workbench: {workbench}\n")
 
         # Resume session if we have one (for multi-turn conversations)
         if self._session_id:
@@ -402,20 +398,14 @@ class ClaudeCodeBackend:
         """Build the prompt for Claude Code.
 
         User message comes FIRST for prominence.
-        Document context is ALWAYS included regardless of CLAUDE.md existence.
+        source.py path is in the system prompt — not repeated here to avoid
+        tempting Claude to read it for pure questions.
         """
         parts = []
 
         # User message FIRST — don't bury it under context
         parts.append(message)
         parts.append("")
-
-        # Source file reference
-        if self.project_dir:
-            source_file = Path(self.project_dir).resolve() / "source.py"
-            if source_file.exists():
-                parts.append(f"source.py: {source_file}")
-                parts.append("")
 
         # Always include document context
         if context:
@@ -561,25 +551,6 @@ class ClaudeCodeBackend:
                 return str(current)
             current = current.parent
         return None
-
-    def _get_active_workbench(self) -> str:
-        """Get the name of the currently active workbench.
-
-        Returns:
-            Workbench name (e.g., "Draft", "Part", "PartDesign") or "Part" as default
-        """
-        try:
-            import FreeCADGui
-            wb = FreeCADGui.activeWorkbench()
-            if wb:
-                # Get workbench name and clean it up
-                wb_name = wb.name() if hasattr(wb, 'name') else str(type(wb).__name__)
-                # Remove "Workbench" suffix if present
-                wb_name = wb_name.replace("Workbench", "").strip()
-                return wb_name
-        except Exception:
-            pass
-        return "Part"  # Default to Part workbench
 
     def clear_session(self):
         """Clear the current session (start fresh conversation)."""
