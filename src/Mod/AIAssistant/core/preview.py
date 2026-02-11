@@ -15,6 +15,27 @@ import Part
 from dataclasses import dataclass, field
 from typing import List, Dict, Optional, Tuple, Any
 
+
+def _build_sandbox_globals(doc):
+    """Build execution globals with all workbench modules for sandbox execution."""
+    exec_globals = {
+        'FreeCAD': FreeCAD,
+        'Part': Part,
+        'doc': doc,
+    }
+
+    for mod_name in [
+        "Draft", "Arch", "BIM", "Sketcher", "PartDesign",
+        "Mesh", "TechDraw", "Spreadsheet", "Surface",
+        "Points", "FEM", "CAM",
+    ]:
+        try:
+            exec_globals[mod_name] = __import__(mod_name)
+        except ImportError:
+            pass
+
+    return exec_globals
+
 # Preview styling for creation
 PREVIEW_COLOR = (0.1, 0.9, 0.3)  # Green
 PREVIEW_TRANSPARENCY = 70  # 70% transparent
@@ -228,24 +249,7 @@ class PreviewManager:
 
         try:
             # Build execution environment for temp doc
-            exec_globals = {
-                'FreeCAD': FreeCAD,
-                'Part': Part,
-                'doc': self._temp_doc,
-            }
-
-            # Add common imports
-            try:
-                import Draft
-                exec_globals['Draft'] = Draft
-            except ImportError:
-                pass
-
-            try:
-                import Arch
-                exec_globals['Arch'] = Arch
-            except ImportError:
-                pass
+            exec_globals = _build_sandbox_globals(self._temp_doc)
 
             # Temporarily set temp doc as active
             FreeCAD.setActiveDocument(self._temp_doc.Name)
@@ -767,24 +771,7 @@ class PreviewManager:
 
         try:
             # Build execution environment
-            exec_globals = {
-                'FreeCAD': FreeCAD,
-                'Part': Part,
-                'doc': temp_doc,
-            }
-
-            # Add common imports
-            try:
-                import Draft
-                exec_globals['Draft'] = Draft
-            except ImportError:
-                pass
-
-            try:
-                import Arch
-                exec_globals['Arch'] = Arch
-            except ImportError:
-                pass
+            exec_globals = _build_sandbox_globals(temp_doc)
 
             # Execute source with warning capture
             FreeCAD.setActiveDocument(temp_doc.Name)
@@ -953,24 +940,7 @@ class PreviewManager:
 
         # Execute source in sandbox
         try:
-            exec_globals = {
-                'FreeCAD': FreeCAD,
-                'Part': Part,
-                'doc': sandbox_doc,
-            }
-
-            # Add common imports
-            try:
-                import Draft
-                exec_globals['Draft'] = Draft
-            except ImportError:
-                pass
-
-            try:
-                import Arch
-                exec_globals['Arch'] = Arch
-            except ImportError:
-                pass
+            exec_globals = _build_sandbox_globals(sandbox_doc)
 
             # Execute with warning capture
             FreeCAD.setActiveDocument(sandbox_doc.Name)
@@ -1075,23 +1045,7 @@ class PreviewManager:
 
         # Re-execute
         try:
-            exec_globals = {
-                'FreeCAD': FreeCAD,
-                'Part': Part,
-                'doc': sandbox_doc,
-            }
-
-            try:
-                import Draft
-                exec_globals['Draft'] = Draft
-            except ImportError:
-                pass
-
-            try:
-                import Arch
-                exec_globals['Arch'] = Arch
-            except ImportError:
-                pass
+            exec_globals = _build_sandbox_globals(sandbox_doc)
 
             FreeCAD.setActiveDocument(sandbox_doc.Name)
             try:
