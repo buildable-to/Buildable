@@ -51,7 +51,7 @@ def format_tool_call(tool: str, input_data: dict) -> str:
         return f"{icon} Grep: '{pattern}' in {path}"
     elif tool == "Edit":
         path = input_data.get("file_path", "")
-        # Show just filename for source.py edits
+        # Show just filename for model.py edits
         if "/" in path:
             path = path.split("/")[-1]
         return f"{icon} Edit: {path}"

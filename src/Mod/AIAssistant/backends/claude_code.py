@@ -129,15 +129,15 @@ def _get_claude_command() -> list:
 # System prompt template - minimal framing, no API examples
 FREECAD_SYSTEM_PROMPT_TEMPLATE = """You are a FreeCAD AI assistant that helps with 3D designs.
 
-source.py: {source_path}
+model.py: {source_path}
 FreeCAD source: {repo_root}
 
 ## When the user asks a question
 Respond with text only. Do NOT read or edit any files.
 
 ## When the user requests a design change
-1. Read source.py to understand the current design
-2. Edit source.py to make the change — write code from your training knowledge, do NOT search the FreeCAD source first
+1. Read model.py to understand the current design
+2. Edit model.py to make the change — write code from your training knowledge, do NOT search the FreeCAD source first
 
 ## Rules for code
 - All dimensions in millimeters
@@ -152,7 +152,7 @@ class ClaudeCodeBackend:
 
     Benefits over HTTP API:
     - Claude can read FreeCAD source code (.pyi stubs, docstrings)
-    - Claude can read project files on-demand (source.py, snapshots/)
+    - Claude can read project files on-demand (model.py, snapshots/)
     - Project-specific CLAUDE.md for custom instructions
     - Session continuity via --resume
     - Tool access (Glob, Grep, Read) for intelligent context gathering
@@ -162,7 +162,7 @@ class ClaudeCodeBackend:
         """Initialize the Claude Code backend.
 
         Args:
-            project_dir: Project directory for accessing source.py and snapshots.
+            project_dir: Project directory for accessing model.py and snapshots.
                         Note: Claude runs from repo root to access FreeCAD API docs.
         """
         self.project_dir = project_dir
@@ -181,7 +181,7 @@ class ClaudeCodeBackend:
         self.last_conversation = []
         self.last_tool_calls: List[Dict] = []  # Tool calls made during last request
 
-        # Track if source.py was edited (for direct source editing flow)
+        # Track if model.py was edited (for direct source editing flow)
         self.source_was_edited: bool = False
 
         # Callback for real-time tool call updates (for progress indicator)
@@ -225,7 +225,7 @@ class ClaudeCodeBackend:
         claude_cmd = _get_claude_command()
         cmd = claude_cmd + ["-p", "--verbose", "--output-format", "stream-json"]
 
-        # Allow Edit and Write tools for direct source.py modification
+        # Allow Edit and Write tools for direct model.py modification
         cmd.extend(["--allowedTools", "Read,Glob,Grep,Edit,Write"])
 
         # Build system prompt
@@ -246,7 +246,7 @@ class ClaudeCodeBackend:
         # NOTE: Prompt is passed via stdin, not as command line argument
         # This avoids shell escaping issues with special characters
 
-        # Set working directory to PROJECT directory (so Claude can edit source.py)
+        # Set working directory to PROJECT directory (so Claude can edit model.py)
         # Claude can still read API docs via absolute paths in the prompt
         cwd = self.project_dir or self._repo_root or os.getcwd()
 
@@ -350,15 +350,15 @@ class ClaudeCodeBackend:
             # Store tool calls for UI access
             self.last_tool_calls = tool_calls
 
-            # Track if source.py was edited (for direct source editing flow)
+            # Track if model.py was edited (for direct source editing flow)
             for tc in tool_calls:
                 tool_name = tc.get("tool")
                 if tool_name in ("Edit", "Write"):
                     file_path = tc.get("input", {}).get("file_path", "")
-                    if "source.py" in file_path:
+                    if "model.py" in file_path:
                         self.source_was_edited = True
                         FreeCAD.Console.PrintMessage(
-                            f"AIAssistant: Detected source.py {tool_name.lower()}\n"
+                            f"AIAssistant: Detected model.py {tool_name.lower()}\n"
                         )
                         break
 
@@ -398,7 +398,7 @@ class ClaudeCodeBackend:
         """Build the prompt for Claude Code.
 
         User message comes FIRST for prominence.
-        source.py path is in the system prompt — not repeated here to avoid
+        model.py path is in the system prompt — not repeated here to avoid
         tempting Claude to read it for pure questions.
         """
         parts = []
@@ -529,9 +529,9 @@ class ClaudeCodeBackend:
             return f"{tool}"
 
     def _get_source_path(self) -> Optional[str]:
-        """Get absolute path to source.py for the project."""
+        """Get absolute path to model.py for the project."""
         if self.project_dir:
-            source_path = Path(self.project_dir) / "source.py"
+            source_path = Path(self.project_dir) / "model.py"
             return str(source_path.resolve())
         return None
 

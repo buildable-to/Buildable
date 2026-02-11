@@ -60,7 +60,7 @@ class SandboxReviewSession:
     """
     sandbox_doc_name: str = ""
     main_doc_name: str = ""
-    source_content: str = ""  # Current source.py being reviewed
+    source_content: str = ""  # Current model.py being reviewed
     iteration: int = 0
     max_iterations: int = 3
     preview_objects: List[str] = field(default_factory=list)  # Preview shapes in main doc
@@ -228,9 +228,9 @@ class PreviewManager:
     def _create_sandbox_preview(self, code: str) -> tuple:
         """Execute code in temp doc and show preview in main doc.
 
-        The sandbox first runs source.py to establish the baseline state,
+        The sandbox first runs model.py to establish the baseline state,
         then runs the LLM's new code on top. This ensures variables from
-        source.py (like `width`, `length`) are available.
+        model.py (like `width`, `length`) are available.
 
         Only NEW objects (created by LLM code) are shown as green preview.
 
@@ -255,7 +255,7 @@ class PreviewManager:
             FreeCAD.setActiveDocument(self._temp_doc.Name)
 
             try:
-                # STEP 1: Run source.py first to establish baseline
+                # STEP 1: Run model.py first to establish baseline
                 # This makes variables like `width`, `length` available to LLM code
                 from . import SourceManager
                 source_content = SourceManager.read_source()
@@ -263,11 +263,11 @@ class PreviewManager:
                 baseline_objects = set()
                 if source_content and source_content.strip():
                     FreeCAD.Console.PrintMessage(
-                        "AIAssistant: Running source.py in sandbox to establish baseline...\n"
+                        "AIAssistant: Running model.py in sandbox to establish baseline...\n"
                     )
                     exec(source_content, exec_globals)
                     self._temp_doc.recompute()
-                    # Record baseline objects (from source.py)
+                    # Record baseline objects (from model.py)
                     baseline_objects = set(
                         obj.Name for obj in self._temp_doc.Objects
                         if obj.TypeId not in ("App::Origin", "App::Plane", "App::Line")
@@ -327,7 +327,7 @@ class PreviewManager:
                 if obj.TypeId in ("App::Origin", "App::Plane", "App::Line"):
                     continue
 
-                # Only preview objects created by LLM code, not baseline from source.py
+                # Only preview objects created by LLM code, not baseline from model.py
                 if obj.Name not in new_objects:
                     continue
 
@@ -584,18 +584,18 @@ class PreviewManager:
         return True
 
     def create_diff_preview(self, old_source: str, new_source: str) -> tuple:
-        """Create preview showing diff between old and new source.py.
+        """Create preview showing diff between old and new model.py.
 
         Executes both versions in sandbox, compares resulting objects:
         - Objects in OLD but not NEW = deleted (red highlight in main doc)
         - Objects in NEW but not OLD = created (green preview)
         - Objects in BOTH but with different geometry = modified (red old + green new)
 
-        Used for direct source editing flow where Claude edits source.py.
+        Used for direct source editing flow where Claude edits model.py.
 
         Args:
-            old_source: Previous source.py content (from backup)
-            new_source: New source.py content (after Claude's edit)
+            old_source: Previous model.py content (from backup)
+            new_source: New model.py content (after Claude's edit)
 
         Returns:
             Tuple of (success: bool, error_message: str)
@@ -614,13 +614,13 @@ class PreviewManager:
         try:
             # Execute OLD source in sandbox
             FreeCAD.Console.PrintMessage(
-                "AIAssistant: Executing old source.py in sandbox...\n"
+                "AIAssistant: Executing old model.py in sandbox...\n"
             )
             old_objects, old_shapes, old_error, old_warnings = self._execute_source_in_sandbox(old_source)
             if old_error:
                 # Old source failed - this shouldn't happen normally
                 FreeCAD.Console.PrintWarning(
-                    f"AIAssistant: Old source.py failed (unusual): {old_error[:100]}...\n"
+                    f"AIAssistant: Old model.py failed (unusual): {old_error[:100]}...\n"
                 )
             FreeCAD.Console.PrintMessage(
                 f"AIAssistant: Old source objects: {sorted(old_objects)}\n"
@@ -628,13 +628,13 @@ class PreviewManager:
 
             # Execute NEW source in sandbox
             FreeCAD.Console.PrintMessage(
-                "AIAssistant: Executing new source.py in sandbox...\n"
+                "AIAssistant: Executing new model.py in sandbox...\n"
             )
             new_objects, new_shapes, new_error, new_warnings = self._execute_source_in_sandbox(new_source)
             if new_error:
                 # New source failed - return error so AIPanel can request fix from Claude
                 FreeCAD.Console.PrintError(
-                    f"AIAssistant: New source.py execution failed\n"
+                    f"AIAssistant: New model.py execution failed\n"
                 )
                 return (False, f"EXECUTION_ERROR:{new_error}")
             FreeCAD.Console.PrintMessage(
@@ -740,7 +740,7 @@ class PreviewManager:
                 )
                 return (True, "")
             else:
-                return (False, "No changes detected between old and new source.py")
+                return (False, "No changes detected between old and new model.py")
 
         except Exception as e:
             import traceback
@@ -906,7 +906,7 @@ class PreviewManager:
         so Claude can iterate and fix issues before the user sees the preview.
 
         Args:
-            new_source: The new source.py content to execute
+            new_source: The new model.py content to execute
 
         Returns:
             Tuple of (success, error_message, session)
@@ -1013,7 +1013,7 @@ class PreviewManager:
 
         Args:
             session: Active sandbox session
-            new_source: Updated source.py content
+            new_source: Updated model.py content
 
         Returns:
             Tuple of (success, error_message)

@@ -597,7 +597,7 @@ class AIAssistantDockWidget(QtWidgets.QDockWidget):
         # Ensure source file exists for saved documents
         self._ensure_source_file()
 
-        # Backup source.py before Claude potentially edits it (for restore on cancel)
+        # Backup model.py before Claude potentially edits it (for restore on cancel)
         SourceManager.backup_source()
 
         # Build context if enabled (using context widget selection)
@@ -618,7 +618,7 @@ class AIAssistantDockWidget(QtWidgets.QDockWidget):
             self._last_execution_error = None  # Clear after including in context
 
         # NOTE: Snapshot is deferred to _on_response() — only captured when
-        # source.py was actually edited. Avoids unnecessary I/O for questions.
+        # model.py was actually edited. Avoids unnecessary I/O for questions.
 
         # Get conversation history
         conversation = self._chat.get_conversation_history()
@@ -707,9 +707,9 @@ Do NOT write any code. Only output the numbered plan steps."""
             self.pending_input = None
             return
 
-        # Check if Claude edited source.py directly (new direct editing flow)
+        # Check if Claude edited model.py directly (new direct editing flow)
         if getattr(self.llm, 'source_was_edited', False):
-            FreeCAD.Console.PrintMessage("AIAssistant: Detected direct source.py edit - using diff preview\n")
+            FreeCAD.Console.PrintMessage("AIAssistant: Detected direct model.py edit - using diff preview\n")
             ActivityLogger.log_source_edited(len(tool_calls), file_path=SourceManager.get_source_path())
 
             # Capture snapshot now (document state is still pre-execution)
@@ -724,7 +724,7 @@ Do NOT write any code. Only output the numbered plan steps."""
             self.pending_input = None
             return
 
-        # Claude didn't edit source.py - clear backup so patch flow is used on approve
+        # Claude didn't edit model.py - clear backup so patch flow is used on approve
         SourceManager.clear_backup()
 
         # Debug: log response content for text-only responses
@@ -755,10 +755,10 @@ Do NOT write any code. Only output the numbered plan steps."""
         self.pending_input = None
 
     def _handle_source_edit_response(self, response: str, attempt: int = 1):
-        """Handle response where Claude edited source.py directly.
+        """Handle response where Claude edited model.py directly.
 
         NEW FLOW (self-review before user approval):
-        1. Get NEW source.py from disk (Claude already edited it)
+        1. Get NEW model.py from disk (Claude already edited it)
         2. Create persistent sandbox and execute
         3. If self-review enabled: Claude reviews sandbox, can iterate
         4. Show preview to user (after Claude is satisfied)
@@ -822,7 +822,7 @@ Do NOT write any code. Only output the numbered plan steps."""
                 self._finalize_sandbox_preview()
 
         elif error_msg.startswith("EXECUTION_ERROR:"):
-            # Execution error - try to auto-fix by asking Claude to fix source.py
+            # Execution error - try to auto-fix by asking Claude to fix model.py
             exec_error = error_msg[len("EXECUTION_ERROR:"):]
             FreeCAD.Console.PrintWarning(
                 f"AIAssistant: Source execution failed (attempt {attempt}): {exec_error[:200]}...\n"
@@ -999,13 +999,13 @@ Return ONLY the fixed Python code in a ```python code block, no explanation need
             self._show_traditional_response(self._last_code)
 
     def _request_source_fix(self, failed_source: str, error: str, original_response: str, attempt: int):
-        """Send execution error to Claude and request fixed source.py.
+        """Send execution error to Claude and request fixed model.py.
 
-        This is used when Claude's edited source.py fails to execute in sandbox.
-        Claude will use the Edit tool to fix source.py directly.
+        This is used when Claude's edited model.py fails to execute in sandbox.
+        Claude will use the Edit tool to fix model.py directly.
 
         Args:
-            failed_source: The source.py content that failed
+            failed_source: The model.py content that failed
             error: Error message/traceback from execution
             original_response: Claude's original response text
             attempt: Current attempt number
@@ -1014,13 +1014,13 @@ Return ONLY the fixed Python code in a ```python code block, no explanation need
         self._source_fix_original_response = original_response
         self._source_fix_attempt = attempt
 
-        fix_prompt = f"""The source.py you just edited failed to execute with this error:
+        fix_prompt = f"""The model.py you just edited failed to execute with this error:
 
 ```
 {error[:1500]}
 ```
 
-Please fix the source.py file using the Edit tool. Common issues:
+Please fix the model.py file using the Edit tool. Common issues:
 - Accessing edge.Vertexes[1] on circular edges (circles only have 1 vertex)
 - Assuming specific edge/face indices after boolean operations
 - Using undefined variables
@@ -1028,7 +1028,7 @@ Please fix the source.py file using the Edit tool. Common issues:
 - Geometry validation failed: Object has invalid/null shape - check API usage
 - Object "failed to compute": Usually means incorrect parameter types or values
 
-Read source.py to understand what went wrong, then fix it."""
+Read model.py to understand what went wrong, then fix it."""
 
         # Start background worker for fix request
         self._source_fix_worker = LLMWorker(self.llm, fix_prompt, "", [])
@@ -1039,7 +1039,7 @@ Read source.py to understand what went wrong, then fix it."""
     def _on_source_fix_response(self, response: str):
         """Handle response from source fix request.
 
-        After Claude fixes source.py, retry the diff preview.
+        After Claude fixes model.py, retry the diff preview.
 
         Args:
             response: Claude's response (explanation of fix)
@@ -1047,22 +1047,22 @@ Read source.py to understand what went wrong, then fix it."""
         attempt = getattr(self, '_source_fix_attempt', 1)
         original_response = getattr(self, '_source_fix_original_response', response)
 
-        # Check if Claude edited source.py
+        # Check if Claude edited model.py
         if getattr(self.llm, 'source_was_edited', False):
             FreeCAD.Console.PrintMessage(
-                f"AIAssistant: Claude fixed source.py, retrying preview (attempt {attempt + 1})\n"
+                f"AIAssistant: Claude fixed model.py, retrying preview (attempt {attempt + 1})\n"
             )
             # Retry the diff preview with the fixed source
             self._handle_source_edit_response(original_response, attempt + 1)
         else:
-            # Claude didn't edit source.py - show error
+            # Claude didn't edit model.py - show error
             FreeCAD.Console.PrintWarning(
-                "AIAssistant: Claude didn't edit source.py in fix response\n"
+                "AIAssistant: Claude didn't edit model.py in fix response\n"
             )
             self._chat.hide_typing()
             SourceManager.restore_source()
             self._chat.add_error_message(
-                f"Could not auto-fix source.py. Claude's response:\n\n{response}"
+                f"Could not auto-fix model.py. Claude's response:\n\n{response}"
             )
 
     def _on_source_fix_error(self, error_msg: str):
@@ -1189,14 +1189,14 @@ Read source.py to understand what went wrong, then fix it."""
 
         # Check if this is a source edit (backup exists) vs old-style patch
         if SourceManager.has_backup():
-            # Source edit flow: source.py already has the changes, execute it
-            FreeCAD.Console.PrintMessage("AIAssistant: Executing edited source.py\n")
+            # Source edit flow: model.py already has the changes, execute it
+            FreeCAD.Console.PrintMessage("AIAssistant: Executing edited model.py\n")
             source_content = SourceManager.read_source()
 
             # Capture state BEFORE clearing (to detect what was deleted)
             before_snapshot = SnapshotManager.capture_current_state()
 
-            # CRITICAL: Clear all document objects before re-executing source.py
+            # CRITICAL: Clear all document objects before re-executing model.py
             # This prevents duplicates (Floor001, etc.) when objects already exist
             doc = FreeCAD.ActiveDocument
             if doc:
@@ -1214,7 +1214,7 @@ Read source.py to understand what went wrong, then fix it."""
                     except Exception:
                         pass
 
-            # Execute the new source.py (on clean document)
+            # Execute the new model.py (on clean document)
             success, message, warnings = CodeExecutor.execute(source_content)
             if warnings:
                 self._last_execution_warnings.extend(warnings)
@@ -1223,7 +1223,7 @@ Read source.py to understand what went wrong, then fix it."""
             after_snapshot = SnapshotManager.capture_current_state()
 
             if success:
-                # Clear backup - source.py is now canonical
+                # Clear backup - model.py is now canonical
                 SourceManager.clear_backup()
 
                 # Capture screenshot for LLM feedback
@@ -1247,7 +1247,7 @@ Read source.py to understand what went wrong, then fix it."""
                 FreeCAD.Console.PrintError(f"AIAssistant: Source execution failed: {message}\n")
                 SourceManager.restore_source()
 
-                # CRITICAL: Re-execute the restored source.py to restore document objects
+                # CRITICAL: Re-execute the restored model.py to restore document objects
                 # (we cleared them before the failed execution)
                 restored_source = SourceManager.read_source()
                 if restored_source:
@@ -1268,9 +1268,9 @@ Read source.py to understand what went wrong, then fix it."""
         # Clear the preview objects
         self._preview_manager.cancel()
 
-        # Restore source.py from backup if this was a source edit
+        # Restore model.py from backup if this was a source edit
         if SourceManager.has_backup():
-            FreeCAD.Console.PrintMessage("AIAssistant: Restoring source.py from backup\n")
+            FreeCAD.Console.PrintMessage("AIAssistant: Restoring model.py from backup\n")
             SourceManager.restore_source()
             ActivityLogger.log_source_restored()
 
@@ -1498,14 +1498,14 @@ Return ONLY the Python code in a ```python code block."""
         """Prompt user to save the document before using AI Assistant.
 
         The AI Assistant requires a saved document to create a project directory
-        for source.py (code history) and session data.
+        for model.py (code history) and session data.
         """
         msg_box = QtWidgets.QMessageBox(self)
         msg_box.setWindowTitle("Save Document Required")
         msg_box.setText("Please save your document first.")
         msg_box.setInformativeText(
             "The AI Assistant needs a saved document to store:\n"
-            "• source.py - Your design's code history\n"
+            "• model.py - Your design's code history\n"
             "• Sessions and snapshots\n\n"
             "Would you like to save now?"
         )
@@ -1619,7 +1619,7 @@ Return ONLY the Python code in a ```python code block."""
     def _run_self_review(self, change_set):
         """Run self-review loop - ask Claude to verify the result looks correct.
 
-        If self-review is enabled and Claude finds issues, it will edit source.py
+        If self-review is enabled and Claude finds issues, it will edit model.py
         and the code will be re-executed. This continues until Claude is satisfied
         or max attempts are reached.
 
@@ -1669,7 +1669,7 @@ IMPORTANT: Look carefully at the geometry from ALL angles. Common issues to chec
 
 If the result looks CORRECT and matches my original request, respond with just: "LOOKS_GOOD"
 
-If there are PROBLEMS, explain briefly what's wrong and edit source.py to fix them. Focus on the most obvious issues first."""
+If there are PROBLEMS, explain briefly what's wrong and edit model.py to fix them. Focus on the most obvious issues first."""
 
         # Use LLMWorker with screenshots
         self._self_review_worker = LLMWorker(
@@ -1700,13 +1700,13 @@ If there are PROBLEMS, explain briefly what's wrong and edit source.py to fix th
             self._self_review_change_set = None
             return
 
-        # Claude found issues - check if it edited source.py
+        # Claude found issues - check if it edited model.py
         if getattr(self.llm, 'source_was_edited', False):
             FreeCAD.Console.PrintMessage(
-                f"AIAssistant: Self-review found issues, Claude edited source.py. Re-executing...\n"
+                f"AIAssistant: Self-review found issues, Claude edited model.py. Re-executing...\n"
             )
 
-            # Re-execute source.py
+            # Re-execute model.py
             source_content = SourceManager.read_source()
 
             # Clear document for clean re-execution
@@ -1745,7 +1745,7 @@ If there are PROBLEMS, explain briefly what's wrong and edit source.py to fix th
                 self._last_execution_error = message
                 self._chat.add_error_message(f"Self-review fix failed: {message}")
         else:
-            # Claude didn't edit source.py - show original result with Claude's feedback
+            # Claude didn't edit model.py - show original result with Claude's feedback
             FreeCAD.Console.PrintMessage(
                 "AIAssistant: Self-review found issues but Claude didn't fix. Showing result with feedback.\n"
             )
@@ -2043,7 +2043,7 @@ REMEMBER: A flat roof when user asked for pitched/gable roof is a MAJOR BUG - fi
 
 If it looks correct: Start your response with [APPROVED] then describe what you see.
 
-If there are problems: Explain what's wrong and edit source.py to fix them."""
+If there are problems: Explain what's wrong and edit model.py to fix them."""
 
         # Send to Claude with sandbox screenshots
         self._sandbox_review_worker = LLMWorker(
@@ -2059,7 +2059,7 @@ If there are problems: Explain what's wrong and edit source.py to fix them."""
         """Handle response from sandbox self-review.
 
         If Claude approves ([APPROVED] marker), show preview to user.
-        If Claude edited source.py, re-execute in sandbox and loop.
+        If Claude edited model.py, re-execute in sandbox and loop.
         """
         self._chat.hide_typing()
 
@@ -2083,10 +2083,10 @@ If there are problems: Explain what's wrong and edit source.py to fix them."""
             self._finalize_sandbox_preview()
             return
 
-        # Check if Claude edited source.py
+        # Check if Claude edited model.py
         if getattr(self.llm, 'source_was_edited', False):
             FreeCAD.Console.PrintMessage(
-                "AIAssistant: Claude edited source.py during sandbox review, re-executing...\n"
+                "AIAssistant: Claude edited model.py during sandbox review, re-executing...\n"
             )
 
             # Re-read edited source

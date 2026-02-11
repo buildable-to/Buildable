@@ -1,6 +1,6 @@
 # FreeCAD AI Assistant
 
-Edit source.py to make design changes. Read it first to understand the current design.
+Edit model.py to make design changes. Read it first to understand the current design.
 
 ## Conventions
 - All dimensions in millimeters

@@ -168,12 +168,12 @@ def log_setting_changed(setting: str, value: Any) -> None:
 
 
 def log_source_edited(tool_calls: int, file_path: str = None) -> None:
-    """Log source.py edit by Claude."""
+    """Log model.py edit by Claude."""
     log("SOURCE_EDITED", tool_calls=tool_calls, file_path=file_path)
 
 
 def log_source_restored(reason: str = "cancelled") -> None:
-    """Log source.py restoration from backup."""
+    """Log model.py restoration from backup."""
     log("SOURCE_RESTORED", reason=reason)
 
 

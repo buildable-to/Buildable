@@ -4,7 +4,7 @@ Source Manager - Maintain generating Python script alongside FreeCAD document.
 
 Accumulates all successfully executed AI-generated code into a single Python
 file that can regenerate the document. Stored in project subfolder:
-  {doc_stem}/source.py
+  {doc_stem}/model.py
 
 This provides:
 1. Full context for the LLM when making modifications
@@ -26,7 +26,7 @@ _pending_code: List[Tuple[str, str, str]] = []
 # Document observer instance (set on module load)
 _observer = None
 
-# Backup of source.py content before Claude edits it
+# Backup of model.py content before Claude edits it
 # Used for restore on cancel and diff preview
 _source_backup: Optional[str] = None
 
@@ -43,11 +43,11 @@ class _SourceManagerObserver:
         """Called when document save begins - initialize source file and flush pending code."""
         global _pending_code
 
-        # Build source path in project subfolder: parent/doc_stem/source.py
+        # Build source path in project subfolder: parent/doc_stem/model.py
         file_path = Path(filename)
         project_dir = file_path.parent / file_path.stem
         project_dir.mkdir(parents=True, exist_ok=True)
-        source_path = project_dir / "source.py"
+        source_path = project_dir / "model.py"
 
         try:
             # Always ensure source file exists (proactive creation)
@@ -99,7 +99,7 @@ def get_source_path() -> Optional[Path]:
     """
     Get path to source file for active document.
 
-    The source file is stored in project subfolder: parent/doc_stem/source.py
+    The source file is stored in project subfolder: parent/doc_stem/model.py
 
     Returns:
         Path to source file, or None if document not saved
@@ -109,7 +109,7 @@ def get_source_path() -> Optional[Path]:
         return None
 
     doc_path = Path(doc.FileName)
-    return doc_path.parent / doc_path.stem / "source.py"
+    return doc_path.parent / doc_path.stem / "model.py"
 
 
 # Lines to strip from code blocks (already in header)
@@ -432,11 +432,11 @@ def init_source_file(source_path: Path = None, doc_name: str = None) -> bool:
 
 def backup_source() -> bool:
     """
-    Backup source.py content before Claude edits it.
+    Backup model.py content before Claude edits it.
 
     Called before each Claude Code invocation to enable:
     1. Restore on cancel (undo Claude's edits)
-    2. Diff preview (compare OLD vs NEW source.py execution)
+    2. Diff preview (compare OLD vs NEW model.py execution)
 
     Returns:
         True if backed up successfully, False if no source file
@@ -450,7 +450,7 @@ def backup_source() -> bool:
 
     try:
         _source_backup = source_path.read_text(encoding="utf-8")
-        FreeCAD.Console.PrintMessage("SourceManager: Backed up source.py\n")
+        FreeCAD.Console.PrintMessage("SourceManager: Backed up model.py\n")
         return True
     except Exception as e:
         FreeCAD.Console.PrintWarning(f"SourceManager: Backup failed: {e}\n")
@@ -460,7 +460,7 @@ def backup_source() -> bool:
 
 def restore_source() -> bool:
     """
-    Restore source.py from backup (on cancel).
+    Restore model.py from backup (on cancel).
 
     Called when user cancels preview to undo Claude's edits.
 
@@ -479,7 +479,7 @@ def restore_source() -> bool:
 
     try:
         source_path.write_text(_source_backup, encoding="utf-8")
-        FreeCAD.Console.PrintMessage("SourceManager: Restored source.py from backup\n")
+        FreeCAD.Console.PrintMessage("SourceManager: Restored model.py from backup\n")
         _source_backup = None
         return True
     except Exception as e:
@@ -489,7 +489,7 @@ def restore_source() -> bool:
 
 def get_backup_content() -> Optional[str]:
     """
-    Get the backed up source.py content for diff preview.
+    Get the backed up model.py content for diff preview.
 
     Returns:
         Backup content, or None if no backup exists
@@ -501,7 +501,7 @@ def clear_backup():
     """
     Clear backup after successful approve.
 
-    Called when user approves preview - source.py is now the canonical version.
+    Called when user approves preview - model.py is now the canonical version.
     """
     global _source_backup
     _source_backup = None
