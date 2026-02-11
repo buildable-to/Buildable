@@ -9,6 +9,7 @@ from .message_model import ChatMessage, MessageRole
 from .code_block import CodeBlockWidget
 from .. import Theme
 import re
+import markdown
 
 
 class DebugInfoWidget(QtWidgets.QWidget):
@@ -398,7 +399,9 @@ class MessageCard(QtWidgets.QFrame):
 
         for part_type, content in parts:
             if part_type == "text" and content.strip():
-                label = QtWidgets.QLabel(content.strip())
+                html = markdown.markdown(content.strip())
+                label = QtWidgets.QLabel(html)
+                label.setTextFormat(QtCore.Qt.RichText)
                 label.setWordWrap(True)
                 label.setTextInteractionFlags(
                     QtCore.Qt.TextSelectableByMouse | QtCore.Qt.LinksAccessibleByMouse
@@ -426,7 +429,9 @@ class MessageCard(QtWidgets.QFrame):
         # For streaming messages with empty text, we skip this (text will come later)
         if self._content_layout.count() == 0 and not self._message.is_streaming:
             display_text = text.strip() if text.strip() else "(No response)"
-            label = QtWidgets.QLabel(display_text)
+            html = markdown.markdown(display_text)
+            label = QtWidgets.QLabel(html)
+            label.setTextFormat(QtCore.Qt.RichText)
             label.setWordWrap(True)
             label.setStyleSheet(f"""
                 QLabel {{

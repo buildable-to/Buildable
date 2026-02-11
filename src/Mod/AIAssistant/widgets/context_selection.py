@@ -60,7 +60,7 @@ class ContextSelectionWidget(QtWidgets.QFrame):
 
         # Show review feedback toggle (for self-review descriptions)
         self._show_review_cb = QtWidgets.QCheckBox("Review")
-        self._show_review_cb.setChecked(True)  # ON by default - agentic self-review catches visual issues
+        self._show_review_cb.setChecked(False)
         self._show_review_cb.setToolTip("AI reviews screenshots before showing preview (catches visual bugs)")
         self._show_review_cb.setStyleSheet(f"""
             QCheckBox {{
