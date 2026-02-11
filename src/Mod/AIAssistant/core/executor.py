@@ -178,14 +178,21 @@ def _build_namespace() -> dict:
         "doc": FreeCAD.ActiveDocument,
     }
 
-    # Import common modules
+    # Import all workbench modules (each wrapped in try/except for optional ones)
     modules_to_import = [
         "Part",
         "Draft",
         "Arch",
+        "BIM",
         "Sketcher",
         "PartDesign",
         "Mesh",
+        "TechDraw",
+        "Spreadsheet",
+        "Surface",
+        "Points",
+        "FEM",
+        "CAM",
     ]
 
     for mod_name in modules_to_import:
@@ -193,13 +200,6 @@ def _build_namespace() -> dict:
             namespace[mod_name] = __import__(mod_name)
         except ImportError:
             pass
-
-    # Try to import BIM module
-    try:
-        import BIM
-        namespace["BIM"] = BIM
-    except ImportError:
-        pass
 
     # Try to import BIM.ArchPrecast
     try:

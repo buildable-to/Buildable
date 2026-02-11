@@ -126,189 +126,25 @@ def _get_claude_command() -> list:
     return [str(node_exe), str(cli_js)]
 
 
-# System prompt template - filled at runtime with workbench-specific info
-FREECAD_SYSTEM_PROMPT_TEMPLATE = """You are a FreeCAD AI assistant.
-Edit source.py directly to make design changes.
+# System prompt template - minimal framing, no API examples
+FREECAD_SYSTEM_PROMPT_TEMPLATE = """You are a FreeCAD AI assistant. You modify designs by editing source.py directly.
 
-source.py location: {source_path}
-Current workbench: {workbench}
-FreeCAD repo root: {repo_root}
+source.py: {source_path}
+Workbench: {workbench}
+FreeCAD source: {repo_root}
 
-## CRITICAL: Choose the Right Approach FIRST
+## Workflow
+1. Read source.py to understand the current design
+2. Write code directly using your training knowledge — do NOT search or browse the FreeCAD source before writing code
+3. Edit source.py to make changes (add, modify, or remove code)
+4. For questions: respond with text only
 
-**BEFORE writing any code, classify the task:**
-
-| Task Type | Use This | NOT This |
-|-----------|----------|----------|
-| **Buildings** (walls, roofs, doors, windows) | `Arch` module | PartDesign |
-| **Mechanical parts** (brackets, enclosures, gears) | `PartDesign` | Arch |
-| **Simple shapes + booleans** (quick prototypes) | `Part` module | PartDesign |
-| **Artistic/organic forms** | `Part` module | PartDesign |
-
-**Why this matters:**
-- PartDesign creates a SINGLE contiguous solid - bad for buildings with separate walls/roof
-- Arch module has Wall, Roof, Window objects designed for architecture
-- Part module allows multiple separate shapes combined with booleans
-
-## WORKFLOW
-1. Read source.py to understand current design
-2. **Classify the task** - building? mechanical part? simple shape?
-3. **Choose the right module** - Arch for buildings, PartDesign for mechanical parts
-4. Use Edit tool to modify source.py directly
-
-{api_reference}
-
-## Coordinate System & Planes (CRITICAL for correct geometry)
-
-FreeCAD uses RIGHT-HANDED coordinates:
-- **X**: Right (East)
-- **Y**: Forward (North)
-- **Z**: Up
-
-**Standard Planes:**
-- `XY_Plane` (Z=0): Horizontal floor plane. Pad goes UP (+Z), Pocket goes DOWN (-Z)
-- `XZ_Plane` (Y=0): Vertical, faces South. Pad goes NORTH (+Y), Pocket goes SOUTH (-Y)
-- `YZ_Plane` (X=0): Vertical, faces West. Pad goes EAST (+X), Pocket goes WEST (-X)
-
-**For openings in walls (doors/windows):**
-- South wall (Y=0): Sketch on XZ_Plane or wall face, Pocket along +Y
-- North wall (Y=max): Sketch on XZ_Plane offset to Y=max, Pocket along -Y (Reversed=True)
-- East wall (X=max): Sketch on YZ_Plane offset to X=max, Pocket along -X (Reversed=True)
-- West wall (X=0): Sketch on YZ_Plane, Pocket along +X
-
-## Code Rules
-- Use millimeters for all dimensions
-- End code with doc.recompute()
-- Use descriptive Labels for objects
-- Use object Names (not Labels) when referencing in code
-
-To ANSWER questions (not modify design): Return clear text explanation."""
-
-
-# Workbench API references - point to actual source files
-WORKBENCH_API_REFS = {
-    "Draft": """For 2D drafting, use the Draft module:
-- API source: {repo_root}/src/Mod/Draft/draftmake/
-- Import: `import Draft`
-- Key functions: Draft.make_line(), Draft.make_wire(), Draft.make_circle(), Draft.make_rectangle()
-- All Z coordinates should be 0 for 2D drawings""",
-
-    "Part": """## Part Module - Simple 3D Shapes + Booleans
-**BEST FOR:** Quick prototypes, simple geometry, boolean combinations, artistic forms
-
-```python
-import Part
-
-# Primitives (returns Shape objects)
-box = Part.makeBox(length, width, height)
-cyl = Part.makeCylinder(radius, height)
-sphere = Part.makeSphere(radius)
-
-# Booleans (returns new Shape)
-result = box.cut(cyl)      # Subtract
-result = box.fuse(cyl)     # Union
-result = box.common(cyl)   # Intersection
-
-# Add to document
-obj = doc.addObject("Part::Feature", "MyShape")
-obj.Shape = result
-```
-
-**Reference:** {repo_root}/src/Mod/AIAssistant/FREECAD_API.md""",
-
-    "PartDesign": """## PartDesign - Parametric Mechanical Parts
-**BEST FOR:** Mechanical parts, brackets, enclosures, precise engineering
-**NOT FOR:** Buildings, architecture (use Arch module instead)
-
-**LIMITATION:** Single contiguous solid only. All features must connect.
-
-```python
-import PartDesign
-import Sketcher
-
-# 1. Create Body (container for all features)
-body = doc.addObject("PartDesign::Body", "Body")
-
-# 2. Create Sketch on a plane
-sketch = body.newObject("Sketcher::SketchObject", "Sketch")
-sketch.AttachmentSupport = [(doc.getObject("XY_Plane"), "")]
-sketch.MapMode = "FlatFace"
-
-# 3. Add geometry to sketch
-sketch.addGeometry(Part.LineSegment(V(0,0,0), V(100,0,0)))
-# ... more geometry ...
-
-# 4. Extrude with Pad
-pad = body.newObject("PartDesign::Pad", "Pad")
-pad.Profile = sketch
-pad.Length = 50
-```
-
-**Pocket Direction:** Cuts PERPENDICULAR to sketch plane
-- Sketch on XY → Pocket cuts along Z
-- Sketch on XZ → Pocket cuts along Y
-- Sketch on YZ → Pocket cuts along X""",
-
-    "Sketcher": """For constraint-based 2D sketching:
-- Import: `import Sketcher`
-- Create fully constrained sketches for PartDesign
-- Constraints: Coincident, Horizontal, Vertical, Distance, Radius, etc.""",
-
-    "BIM": """## Arch/BIM Module - Buildings & Architecture
-**BEST FOR:** Buildings, walls, roofs, doors, windows, floors
-**USE THIS for warehouses, houses, any architectural structure**
-
-```python
-import Arch
-import Draft
-
-# Walls - automatically handle thickness and openings
-wall = Arch.makeWall(baseobj=None, length=5000, width=200, height=3000)
-
-# Or from a baseline
-line = Draft.make_line(FreeCAD.Vector(0,0,0), FreeCAD.Vector(5000,0,0))
-wall = Arch.makeWall(line, width=200, height=3000)
-
-# Openings (doors/windows) - automatically cut through walls
-window = Arch.makeWindowPreset("Simple door", width=1000, height=2100, h1=100, h2=100, w1=0, w2=0, sill=0)
-window.Hosts = [wall]  # Attaches to wall and cuts opening
-
-# Roof
-roof = Arch.makeRoof(baseobj, angles=[45])  # Pitched roof from base wire
-
-# Structure (columns, beams)
-column = Arch.makeStructure(length=300, width=300, height=3000)
-```
-
-**Advantages over PartDesign for buildings:**
-- Walls are hollow by design (inside/outside faces)
-- Windows/doors automatically create openings
-- Roof handles pitch angles correctly
-- IFC export for BIM workflows""",
-
-    "Arch": """## Arch Module - Buildings & Architecture
-**BEST FOR:** Buildings, walls, roofs, doors, windows, floors
-
-```python
-import Arch
-
-# Walls
-wall = Arch.makeWall(None, length=5000, width=200, height=3000)
-
-# Windows/Doors (cut through walls automatically)
-window = Arch.makeWindowPreset("Simple door", width=1000, height=2100)
-window.Hosts = [wall]
-
-# Roof
-roof = Arch.makeRoof(baseobj, angles=[45])
-
-# Structure (columns, beams)
-column = Arch.makeStructure(length=300, width=300, height=3000)
-```""",
-
-    "TechDraw": """For technical drawings:
-- Create pages and add views of 3D objects""",
-}
+## Rules
+- All dimensions in millimeters
+- End with doc.recompute()
+- Use descriptive Labels, reference objects by Name in code
+- Coordinate system: X=right, Y=forward, Z=up (right-handed)
+- XY_Plane=horizontal, XZ_Plane=vertical south-facing, YZ_Plane=vertical west-facing"""
 
 
 class ClaudeCodeBackend:
@@ -392,22 +228,15 @@ class ClaudeCodeBackend:
         # Allow Edit and Write tools for direct source.py modification
         cmd.extend(["--allowedTools", "Read,Glob,Grep,Edit,Write"])
 
-        # Build system prompt with workbench-specific info
-        # ALWAYS include workbench context, even if project has CLAUDE.md
+        # Build system prompt
         source_path = self._get_source_path()
         workbench = self._get_active_workbench()
         repo_root = self._repo_root or ""
-
-        # Get workbench-specific API reference
-        api_ref = WORKBENCH_API_REFS.get(workbench, "")
-        if api_ref:
-            api_ref = api_ref.format(repo_root=repo_root)
 
         system_prompt = FREECAD_SYSTEM_PROMPT_TEMPLATE.format(
             source_path=source_path or "(no project)",
             workbench=workbench,
             repo_root=repo_root,
-            api_reference=api_ref
         )
         cmd.extend(["--append-system-prompt", system_prompt])
         self.last_system_prompt = system_prompt
@@ -572,44 +401,38 @@ class ClaudeCodeBackend:
                        multi_angle_screenshots: list = None) -> str:
         """Build the prompt for Claude Code.
 
-        Claude runs from project directory and can edit source.py directly.
-        FreeCAD API docs are accessible via absolute paths in the system prompt.
+        User message comes FIRST for prominence.
+        Document context is ALWAYS included regardless of CLAUDE.md existence.
         """
         parts = []
 
-        # Include project info in prompt
+        # User message FIRST — don't bury it under context
+        parts.append(message)
+        parts.append("")
+
+        # Source file reference
         if self.project_dir:
-            project_path = Path(self.project_dir).resolve()
-            parts.append(f"Project directory: {project_path}")
-            source_file = project_path / "source.py"
+            source_file = Path(self.project_dir).resolve() / "source.py"
             if source_file.exists():
-                parts.append(f"Code history: {source_file}")
-            parts.append("")  # Blank line
+                parts.append(f"source.py: {source_file}")
+                parts.append("")
 
-        # If no project CLAUDE.md exists, include context directly
-        if self.project_dir:
-            claude_md_path = Path(self.project_dir) / "CLAUDE.md"
-            if not claude_md_path.exists() and context:
-                parts.append(f"CURRENT DOCUMENT STATE:\n{context}\n")
-        elif context:
-            parts.append(f"CURRENT DOCUMENT STATE:\n{context}\n")
+        # Always include document context
+        if context:
+            parts.append(f"## Document State\n{context}")
+            parts.append("")
 
-        # Add screenshot reference if provided
+        # Screenshots
         if screenshot_path:
-            parts.append(f"[Screenshot of current viewport: {screenshot_path}]\n")
+            parts.append(f"[Screenshot of current viewport: {screenshot_path}]")
 
-        # Add multi-angle screenshots from previous execution (for self-review)
         if multi_angle_screenshots:
-            parts.append("### Screenshots from Previous Execution (multiple angles):")
-            parts.append("Review these to understand how the current design looks from different angles.")
+            parts.append("### Multi-angle screenshots:")
             for path in multi_angle_screenshots:
-                # Extract view name from filename (e.g., "2026-01-16_10-30-00_isometric.png")
                 filename = Path(path).name
                 view_name = filename.rsplit("_", 1)[-1].replace(".png", "") if "_" in filename else "view"
                 parts.append(f"- {view_name}: {path}")
             parts.append("")
-
-        parts.append(message)
 
         return "\n".join(parts)
 
@@ -721,16 +544,6 @@ class ClaudeCodeBackend:
             source_path = Path(self.project_dir) / "source.py"
             return str(source_path.resolve())
         return None
-
-    def _has_claude_md(self) -> bool:
-        """Check if project has CLAUDE.md file.
-
-        If CLAUDE.md exists in the project directory, Claude Code will
-        automatically load it as context instructions.
-        """
-        if self.project_dir:
-            return (Path(self.project_dir) / "CLAUDE.md").exists()
-        return False
 
     def _find_repo_root(self) -> Optional[str]:
         """Find FreeCAD repo root directory.
