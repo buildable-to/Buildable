@@ -130,7 +130,6 @@ def _get_claude_command() -> list:
 FREECAD_SYSTEM_PROMPT_TEMPLATE = """You are a FreeCAD AI assistant. You modify designs by editing source.py directly.
 
 source.py: {source_path}
-Workbench: {workbench}
 FreeCAD source: {repo_root}
 
 ## Workflow
@@ -230,18 +229,14 @@ class ClaudeCodeBackend:
 
         # Build system prompt
         source_path = self._get_source_path()
-        workbench = self._get_active_workbench()
         repo_root = self._repo_root or ""
 
         system_prompt = FREECAD_SYSTEM_PROMPT_TEMPLATE.format(
             source_path=source_path or "(no project)",
-            workbench=workbench,
             repo_root=repo_root,
         )
         cmd.extend(["--append-system-prompt", system_prompt])
         self.last_system_prompt = system_prompt
-
-        FreeCAD.Console.PrintMessage(f"AIAssistant: Using workbench: {workbench}\n")
 
         # Resume session if we have one (for multi-turn conversations)
         if self._session_id:
@@ -561,25 +556,6 @@ class ClaudeCodeBackend:
                 return str(current)
             current = current.parent
         return None
-
-    def _get_active_workbench(self) -> str:
-        """Get the name of the currently active workbench.
-
-        Returns:
-            Workbench name (e.g., "Draft", "Part", "PartDesign") or "Part" as default
-        """
-        try:
-            import FreeCADGui
-            wb = FreeCADGui.activeWorkbench()
-            if wb:
-                # Get workbench name and clean it up
-                wb_name = wb.name() if hasattr(wb, 'name') else str(type(wb).__name__)
-                # Remove "Workbench" suffix if present
-                wb_name = wb_name.replace("Workbench", "").strip()
-                return wb_name
-        except Exception:
-            pass
-        return "Part"  # Default to Part workbench
 
     def clear_session(self):
         """Clear the current session (start fresh conversation)."""
