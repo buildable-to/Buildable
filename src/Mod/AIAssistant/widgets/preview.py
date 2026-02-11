@@ -261,7 +261,14 @@ class PreviewWidget(QtWidgets.QFrame):
         self._fade_anim.setStartValue(0.0)
         self._fade_anim.setEndValue(1.0)
         self._fade_anim.setEasingCurve(QtCore.QEasingCurve.OutCubic)
+        # Remove the graphics effect after animation to avoid Qt6 rendering issues
+        # (buttons can become invisible under QGraphicsOpacityEffect)
+        self._fade_anim.finished.connect(self._clear_opacity_effect)
         self._fade_anim.start()
+
+    def _clear_opacity_effect(self):
+        """Remove opacity effect after fade-in to fix child widget rendering."""
+        self.setGraphicsEffect(None)
 
     def _create_item_row(self, item: Dict) -> QtWidgets.QWidget:
         """Create a row widget for a preview item."""
