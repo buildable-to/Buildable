@@ -127,18 +127,19 @@ def _get_claude_command() -> list:
 
 
 # System prompt template - minimal framing, no API examples
-FREECAD_SYSTEM_PROMPT_TEMPLATE = """You are a FreeCAD AI assistant. You modify designs by editing source.py directly.
+FREECAD_SYSTEM_PROMPT_TEMPLATE = """You are a FreeCAD AI assistant that helps with 3D designs.
 
 source.py: {source_path}
 FreeCAD source: {repo_root}
 
-## Workflow
-1. Read source.py to understand the current design
-2. Write code directly using your training knowledge — do NOT search or browse the FreeCAD source before writing code
-3. Edit source.py to make changes (add, modify, or remove code)
-4. For questions: respond with text only
+## When the user asks a question
+Respond with text only. Do NOT read or edit any files.
 
-## Rules
+## When the user requests a design change
+1. Read source.py to understand the current design
+2. Edit source.py to make the change — write code from your training knowledge, do NOT search the FreeCAD source first
+
+## Rules for code
 - All dimensions in millimeters
 - End with doc.recompute()
 - Use descriptive Labels, reference objects by Name in code
@@ -397,20 +398,14 @@ class ClaudeCodeBackend:
         """Build the prompt for Claude Code.
 
         User message comes FIRST for prominence.
-        Document context is ALWAYS included regardless of CLAUDE.md existence.
+        source.py path is in the system prompt — not repeated here to avoid
+        tempting Claude to read it for pure questions.
         """
         parts = []
 
         # User message FIRST — don't bury it under context
         parts.append(message)
         parts.append("")
-
-        # Source file reference
-        if self.project_dir:
-            source_file = Path(self.project_dir).resolve() / "source.py"
-            if source_file.exists():
-                parts.append(f"source.py: {source_file}")
-                parts.append("")
 
         # Always include document context
         if context:

@@ -2,7 +2,8 @@
 """
 PhasedProgressIndicator - Shows meaningful workflow phases during AI processing.
 
-Replaces generic skeleton bars with actual progress through:
+Starts with a simple "Thinking..." spinner. When tool calls arrive, transitions
+to phased steps showing progress through the design change workflow:
 1. Reading source.py
 2. Understanding design
 3. Generating changes
@@ -212,13 +213,18 @@ class PhaseStepWidget(QtWidgets.QWidget):
 
 
 class PhasedProgressIndicator(QtWidgets.QFrame):
-    """Shows workflow phases during AI processing."""
+    """Shows workflow phases during AI processing.
+
+    Starts in "thinking" mode (simple spinner + label).
+    Transitions to phased steps when tool calls arrive.
+    """
 
     def __init__(self, parent=None, show_review_phase: bool = True):
         super().__init__(parent)
         self._steps: dict[Phase, PhaseStepWidget] = {}
         self._current_phase: Phase | None = None
         self._show_review_phase = show_review_phase
+        self._in_thinking_mode = True
         self._setup_ui()
 
     def _setup_ui(self):
@@ -236,17 +242,54 @@ class PhasedProgressIndicator(QtWidgets.QFrame):
         self._layout.setContentsMargins(16, 14, 16, 14)
         self._layout.setSpacing(2)
 
-        # Create step widgets for each phase
+        # --- Thinking mode widget (shown initially) ---
+        self._thinking_widget = QtWidgets.QWidget()
+        thinking_layout = QtWidgets.QHBoxLayout(self._thinking_widget)
+        thinking_layout.setContentsMargins(0, 4, 0, 4)
+        thinking_layout.setSpacing(12)
+
+        self._thinking_icon = PhaseIcon()
+        self._thinking_icon.set_state(PhaseState.ACTIVE)
+        thinking_layout.addWidget(self._thinking_icon)
+
+        thinking_label = QtWidgets.QLabel("Thinking...")
+        thinking_label.setStyleSheet(f"""
+            QLabel {{
+                color: {Theme.COLORS['text_primary']};
+                font-size: {Theme.FONTS['size_sm']};
+                font-weight: {Theme.FONTS['weight_medium']};
+                background: transparent;
+            }}
+        """)
+        thinking_layout.addWidget(thinking_label)
+        thinking_layout.addStretch()
+
+        self._layout.addWidget(self._thinking_widget)
+
+        # --- Phased steps (hidden initially) ---
+        self._phases_container = QtWidgets.QWidget()
+        phases_layout = QtWidgets.QVBoxLayout(self._phases_container)
+        phases_layout.setContentsMargins(0, 0, 0, 0)
+        phases_layout.setSpacing(2)
+
         for phase in Phase:
             step = PhaseStepWidget(phase)
             self._steps[phase] = step
-            # Hide review phase if not enabled
             if phase == Phase.REVIEWING and not self._show_review_phase:
                 step.hide()
-            self._layout.addWidget(step)
+            phases_layout.addWidget(step)
 
-        # Start with first phase active
-        self.set_phase(Phase.READING)
+        self._phases_container.hide()
+        self._layout.addWidget(self._phases_container)
+
+    def _switch_to_phased_mode(self):
+        """Transition from thinking mode to phased steps."""
+        if not self._in_thinking_mode:
+            return
+        self._in_thinking_mode = False
+        self._thinking_icon.set_state(PhaseState.PENDING)  # Stop animation
+        self._thinking_widget.hide()
+        self._phases_container.show()
 
     def set_review_phase_visible(self, visible: bool):
         """Show or hide the reviewing phase."""
@@ -256,6 +299,7 @@ class PhasedProgressIndicator(QtWidgets.QFrame):
 
     def set_phase(self, phase: Phase):
         """Set the current active phase, completing previous phases."""
+        self._switch_to_phased_mode()
         self._current_phase = phase
 
         for p in Phase:
@@ -279,20 +323,27 @@ class PhasedProgressIndicator(QtWidgets.QFrame):
 
     def complete_all(self):
         """Mark all phases as complete."""
+        self._switch_to_phased_mode()
         for step in self._steps.values():
             step.set_state(PhaseState.COMPLETE)
         self._current_phase = None
 
     def reset(self):
-        """Reset all phases to pending."""
+        """Reset to thinking mode."""
+        # Reset phased steps
         for step in self._steps.values():
             step.set_state(PhaseState.PENDING)
         self._current_phase = None
 
+        # Return to thinking mode
+        self._in_thinking_mode = True
+        self._thinking_icon.set_state(PhaseState.ACTIVE)
+        self._thinking_widget.show()
+        self._phases_container.hide()
+
     def update_from_tool(self, tool_name: str, tool_input: dict):
         """Update phase based on tool call from backend."""
         file_path = tool_input.get("file_path", "")
-        pattern = tool_input.get("pattern", "")
 
         # Determine phase from tool
         if tool_name == "Read" and "source.py" in file_path:
@@ -305,6 +356,7 @@ class PhasedProgressIndicator(QtWidgets.QFrame):
             # Unknown tool, don't change phase
             return
 
+        # First tool call transitions from thinking to phased
         # Only advance forward, never backward
         if self._current_phase is None:
             self.set_phase(target_phase)

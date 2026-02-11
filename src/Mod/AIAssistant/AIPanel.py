@@ -617,16 +617,8 @@ class AIAssistantDockWidget(QtWidgets.QDockWidget):
             context += f"\n\n### Error from Previous Execution:\n```\n{self._last_execution_error}\n```\nPlease fix this error in your next code generation."
             self._last_execution_error = None  # Clear after including in context
 
-        # Capture object snapshot for future context enrichment
-        snapshot_id, snapshot_path = SnapshotManager.save_snapshot()
-
-        # Link snapshot to session
-        if snapshot_id:
-            self.session_manager.add_snapshot_reference(snapshot_id)
-            # Get object count from document
-            doc = FreeCAD.ActiveDocument
-            obj_count = len(doc.Objects) if doc else 0
-            ActivityLogger.log_snapshot_saved(snapshot_id, object_count=obj_count)
+        # NOTE: Snapshot is deferred to _on_response() — only captured when
+        # source.py was actually edited. Avoids unnecessary I/O for questions.
 
         # Get conversation history
         conversation = self._chat.get_conversation_history()
@@ -719,6 +711,15 @@ Do NOT write any code. Only output the numbered plan steps."""
         if getattr(self.llm, 'source_was_edited', False):
             FreeCAD.Console.PrintMessage("AIAssistant: Detected direct source.py edit - using diff preview\n")
             ActivityLogger.log_source_edited(len(tool_calls), file_path=SourceManager.get_source_path())
+
+            # Capture snapshot now (document state is still pre-execution)
+            snapshot_id, snapshot_path = SnapshotManager.save_snapshot()
+            if snapshot_id:
+                self.session_manager.add_snapshot_reference(snapshot_id)
+                doc = FreeCAD.ActiveDocument
+                obj_count = len(doc.Objects) if doc else 0
+                ActivityLogger.log_snapshot_saved(snapshot_id, object_count=obj_count)
+
             self._handle_source_edit_response(response)
             self.pending_input = None
             return
