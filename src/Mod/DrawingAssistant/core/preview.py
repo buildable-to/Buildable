@@ -1228,6 +1228,36 @@ class PreviewManager:
 
         return preview_count > 0
 
+    def get_sandbox_summary(self, session: SandboxReviewSession) -> List[Dict]:
+        """Get object summary directly from sandbox doc.
+
+        Used when object_shapes is empty (e.g. TechDraw/Draft groups with no
+        Part shapes) but the sandbox execution succeeded.
+        """
+        sandbox_doc = FreeCAD.getDocument(session.sandbox_doc_name)
+        if not sandbox_doc:
+            return []
+        result = []
+        for obj in sandbox_doc.Objects:
+            if obj.TypeId in ("App::Origin", "App::Plane", "App::Line"):
+                continue
+            type_name = obj.TypeId.split("::")[-1] if "::" in obj.TypeId else obj.TypeId
+            dimensions = {}
+            if hasattr(obj, 'Shape') and obj.Shape and not obj.Shape.isNull():
+                bbox = obj.Shape.BoundBox
+                dimensions = {
+                    "width": round(bbox.XLength, 2),
+                    "depth": round(bbox.YLength, 2),
+                    "height": round(bbox.ZLength, 2),
+                }
+            result.append({
+                "name": obj.Name,
+                "label": obj.Label,
+                "type": type_name,
+                "dimensions": dimensions,
+            })
+        return result
+
     def close_sandbox(self, session: Optional[SandboxReviewSession]) -> None:
         """Close sandbox document and clean up session.
 

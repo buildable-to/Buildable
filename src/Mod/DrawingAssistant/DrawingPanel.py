@@ -1882,18 +1882,18 @@ If there are problems: Explain what's wrong and edit the relevant page file to f
 
         success = self._preview_manager.commit_sandbox_to_preview(self._sandbox_session)
 
-        if not success:
-            FreeCAD.Console.PrintWarning(
-                "DrawingAssistant: Failed to create preview from sandbox\n"
-            )
-            self._preview_manager.close_sandbox(self._sandbox_session)
-            self._sandbox_session = None
-            self._chat.add_error_message("Failed to create preview")
-            return
+        if success:
+            preview_items = self._preview_manager.get_preview_summary()
+        else:
+            # 2D objects (TechDraw/Draft groups) have no Part shapes for 3D green
+            # preview, but sandbox ran fine. Get object list from sandbox directly.
+            # Approve handler reads pages from disk (SourceManager), not from
+            # _pending_code, so no need to set it here.
+            preview_items = self._preview_manager.get_sandbox_summary(self._sandbox_session)
 
         self._preview_manager.close_sandbox(self._sandbox_session)
 
-        preview_items = self._preview_manager.get_preview_summary()
+        source_content = self._sandbox_session.source_content
 
         FreeCAD.Console.PrintMessage(
             f"DrawingAssistant: Sandbox preview finalized with {len(preview_items)} objects\n"
@@ -1904,7 +1904,7 @@ If there are problems: Explain what's wrong and edit the relevant page file to f
         self._chat.add_preview_message(
             description=self._sandbox_review_response or "Page files modified",
             preview_items=preview_items,
-            code=self._sandbox_session.source_content,
+            code=source_content,
             is_deletion=False,
             auto_approve=auto_approve,
             tool_calls=None

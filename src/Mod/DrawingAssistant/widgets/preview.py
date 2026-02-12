@@ -118,7 +118,7 @@ class PreviewWidget(QtWidgets.QFrame):
             """)
             layout.addWidget(desc_label)
 
-        # Preview items list
+        # Preview items list (collapsed by default)
         if items:
             items_frame = QtWidgets.QFrame()
             items_frame.setStyleSheet(f"""
@@ -129,20 +129,40 @@ class PreviewWidget(QtWidgets.QFrame):
             items_layout.setContentsMargins(12, 10, 12, 10)
             items_layout.setSpacing(6)
 
-            # Different text for deletion mode
+            # Clickable header to toggle item list
             action = "delete" if self._is_deletion else "create"
-            count_label = QtWidgets.QLabel(f"{len(items)} object{'s' if len(items) > 1 else ''} to {action}")
             count_color = DELETION_ACCENT if self._is_deletion else Theme.COLORS['text_muted']
-            count_label.setStyleSheet(f"""
-                color: {count_color};
-                font-size: {Theme.FONTS['size_xs']};
-                background: transparent;
+            self._items_toggle = QtWidgets.QPushButton(
+                f"▶ {len(items)} object{'s' if len(items) > 1 else ''} to {action}"
+            )
+            self._items_toggle.setCursor(QtCore.Qt.PointingHandCursor)
+            self._items_toggle.setStyleSheet(f"""
+                QPushButton {{
+                    color: {count_color};
+                    font-size: {Theme.FONTS['size_xs']};
+                    background: transparent;
+                    border: none;
+                    text-align: left;
+                    padding: 0;
+                }}
+                QPushButton:hover {{
+                    color: {Theme.COLORS['text_secondary']};
+                }}
             """)
-            items_layout.addWidget(count_label)
+            self._items_count_text = f"{len(items)} object{'s' if len(items) > 1 else ''} to {action}"
+            self._items_toggle.clicked.connect(self._toggle_items)
+            items_layout.addWidget(self._items_toggle)
 
+            # Container for item rows (hidden by default)
+            self._items_container = QtWidgets.QWidget()
+            items_container_layout = QtWidgets.QVBoxLayout(self._items_container)
+            items_container_layout.setContentsMargins(0, 0, 0, 0)
+            items_container_layout.setSpacing(6)
             for item in items:
                 item_widget = self._create_item_row(item)
-                items_layout.addWidget(item_widget)
+                items_container_layout.addWidget(item_widget)
+            self._items_container.setVisible(False)
+            items_layout.addWidget(self._items_container)
 
             layout.addWidget(items_frame)
 
@@ -326,6 +346,13 @@ class PreviewWidget(QtWidgets.QFrame):
 
         layout.addStretch()
         return widget
+
+    def _toggle_items(self):
+        """Toggle item list visibility."""
+        visible = not self._items_container.isVisible()
+        self._items_container.setVisible(visible)
+        arrow = "▼" if visible else "▶"
+        self._items_toggle.setText(f"{arrow} {self._items_count_text}")
 
     def _toggle_code(self):
         """Toggle code visibility."""

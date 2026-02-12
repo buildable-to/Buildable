@@ -30,7 +30,7 @@ class ModeSegmentedControl(QtWidgets.QWidget):
         layout.setContentsMargins(2, 2, 2, 2)
         layout.setSpacing(0)
 
-        self._btn_3d = self._make_button("3D", "3d")
+        self._btn_3d = self._make_button("3D BETA", "3d")
         self._btn_drawing = self._make_button("Drawing", "drawing")
         layout.addWidget(self._btn_3d)
         layout.addWidget(self._btn_drawing)

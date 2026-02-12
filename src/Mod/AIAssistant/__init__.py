@@ -43,39 +43,12 @@ def show_chooser():
     global _chooser
 
     last = _get_last_mode()
-    if last:
-        if last == "drawing":
-            import DrawingAssistant
-            DrawingAssistant.show()
-        else:
-            show()
-        return
-
-    # First time — show chooser
-    import FreeCAD
-    import FreeCADGui
-    from PySide6 import QtCore, QtWidgets
-
-    mw = FreeCADGui.getMainWindow()
-    if mw is None:
-        return
-
-    # Hide both panels if they exist
-    for name in ("AIAssistantDockWidget", "DrawingAssistantDockWidget"):
-        panel = mw.findChild(QtWidgets.QDockWidget, name)
-        if panel and panel.isVisible():
-            panel.hide()
-
-    if _chooser is None:
-        from .widgets.welcome_chooser import AssistantChooserDockWidget
-        from . import Theme
-        _chooser = AssistantChooserDockWidget(theme_module=Theme)
-        _chooser.setObjectName("AssistantChooserDockWidget")
-        _chooser.modeChosen.connect(_on_chooser_mode)
-        mw.addDockWidget(QtCore.Qt.RightDockWidgetArea, _chooser)
-
-    _chooser.show()
-    _chooser.raise_()
+    if last == "3d":
+        show()
+    else:
+        # Default to drawing mode
+        import DrawingAssistant
+        DrawingAssistant.show()
 
 
 def _on_chooser_mode(mode):
