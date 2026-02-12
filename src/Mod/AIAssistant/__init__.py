@@ -18,17 +18,22 @@ _panel = None
 
 
 def show():
-    """Show the AI Assistant panel."""
+    """Show the AI Assistant panel (hides Drawing Assistant if visible)."""
     global _panel
     import FreeCAD
     import FreeCADGui
-    from PySide6 import QtCore
+    from PySide6 import QtCore, QtWidgets
     from . import AIPanel
 
     mw = FreeCADGui.getMainWindow()
     if mw is None:
         FreeCAD.Console.PrintWarning("AIAssistant: No main window\n")
         return None
+
+    # Hide Drawing Assistant if present (mutual exclusivity)
+    drawing_panel = mw.findChild(QtWidgets.QDockWidget, "DrawingAssistantDockWidget")
+    if drawing_panel and drawing_panel.isVisible():
+        drawing_panel.hide()
 
     if _panel is None:
         _panel = AIPanel.AIAssistantDockWidget()

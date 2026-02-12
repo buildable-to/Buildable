@@ -116,12 +116,17 @@ def _setup_document_observer():
 
         def slotCreatedDocument(self, doc):
             """Called when a new document is created."""
+            # Skip internal/sandbox documents
+            if doc.Name.startswith("__"):
+                return
             FreeCAD.Console.PrintMessage(f">>> AIAssistant: Document created: {doc.Name}\n")
             from PySide6 import QtCore
             QtCore.QTimer.singleShot(100, _show_panel_safe)
 
         def slotOpenedDocument(self, doc):
             """Called when an existing document is opened."""
+            if doc.Name.startswith("__"):
+                return
             FreeCAD.Console.PrintMessage(f">>> AIAssistant: Document opened: {doc.Name}\n")
             from PySide6 import QtCore
             QtCore.QTimer.singleShot(100, _show_panel_safe)
