@@ -75,6 +75,76 @@ class WarningCapture:
         return False
 
 
+def _find_3d_view():
+    """Find a 3D view by scanning MDI sub-windows.
+
+    Unlike gui_utils.get_3d_view() which only returns the *active* window,
+    this searches ALL MDI sub-windows for one with getSceneGraph (a 3D view).
+    Works even when a TechDraw page tab is currently active.
+    """
+    try:
+        mw = FreeCADGui.getMainWindow()
+        mdi = mw.centralWidget()
+        for sub in mdi.subWindowList():
+            widget = sub.widget()
+            if hasattr(widget, "getSceneGraph"):
+                return widget
+    except Exception:
+        pass
+    return None
+
+
+class _View3DGuard:
+    """Monkeypatch Draft's get_3d_view to survive TechDraw tab activation.
+
+    When a TechDraw::DrawPage is created and doc.recompute() runs, FreeCAD
+    activates the TechDraw MDI tab. Draft functions like make_linear_dimension()
+    call gui_utils.get3DView().getViewDirection(), which returns None when the
+    active window is a TechDraw page (no getSceneGraph). This guard stores
+    the 3D view before execution and falls back to it if get_3d_view returns None.
+    """
+
+    def __init__(self):
+        self._original_fn = None
+        self._stored_view = None
+        self._gui_utils = None
+
+    def install(self):
+        """Store current 3D view and patch gui_utils."""
+        try:
+            from draftutils import gui_utils
+            self._gui_utils = gui_utils
+            self._original_fn = gui_utils.get_3d_view
+
+            # Find the 3D view even if a TechDraw tab is currently active.
+            # gui_utils.get_3d_view() only returns the active window, which
+            # may be a TechDraw page. _find_3d_view() scans all MDI windows.
+            self._stored_view = gui_utils.get_3d_view() or _find_3d_view()
+
+            if self._stored_view is None:
+                return  # No 3D view available — nothing to guard
+
+            def _safe_get_3d_view():
+                view = self._original_fn()
+                if view is None:
+                    return self._stored_view
+                return view
+
+            gui_utils.get_3d_view = _safe_get_3d_view
+            gui_utils.get3DView = _safe_get_3d_view
+        except Exception:
+            pass  # Draft not available — nothing to guard
+
+    def uninstall(self):
+        """Restore original get_3d_view."""
+        if self._gui_utils and self._original_fn:
+            try:
+                self._gui_utils.get_3d_view = self._original_fn
+                self._gui_utils.get3DView = self._original_fn
+            except Exception:
+                pass
+
+
 def execute(code: str) -> tuple:
     """
     Execute Python code in FreeCAD's environment.
@@ -99,6 +169,12 @@ def execute(code: str) -> tuple:
 
     # Build execution namespace with FreeCAD modules
     namespace = _build_namespace()
+
+    # Guard against TechDraw page tabs stealing focus from the 3D view.
+    # Draft.make_linear_dimension() etc. call gui_utils.get3DView().getViewDirection(),
+    # which returns None when a TechDraw page is the active MDI window.
+    view_guard = _View3DGuard()
+    view_guard.install()
 
     try:
         # Execute with warning capture
@@ -130,6 +206,9 @@ def execute(code: str) -> tuple:
 
     except Exception as e:
         return False, f"Execution error: {type(e).__name__}: {e}", []
+
+    finally:
+        view_guard.uninstall()
 
 
 def get_last_warnings() -> list:
