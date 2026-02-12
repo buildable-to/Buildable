@@ -282,6 +282,37 @@ def _describe_console_errors(errors) -> str:
     return "\n".join(lines)
 
 
+def _get_pages_context() -> str:
+    """Get summary of drawing pages in pages/ directory."""
+    try:
+        from . import source as SourceManager
+
+        pages_meta = SourceManager.list_pages_metadata()
+        if not pages_meta:
+            return ""
+
+        lines = [f"\n### Drawing Pages ({len(pages_meta)} files):"]
+        for meta in pages_meta:
+            parts = [f"  {meta['filename']} ({meta['line_count']} lines)"]
+
+            tags = []
+            if meta.get("has_techdraw"):
+                tags.append("TechDraw")
+            if meta.get("has_spreadsheet"):
+                tags.append("Spreadsheet")
+            if tags:
+                parts.append(f"[{', '.join(tags)}]")
+
+            if meta.get("first_comment"):
+                parts.append(f"— {meta['first_comment']}")
+
+            lines.append(" ".join(parts))
+
+        return "\n".join(lines)
+    except Exception:
+        return ""
+
+
 def build_context(objects_filter: list = None) -> str:
     """Build lean context: document state, not strategy.
 
@@ -316,12 +347,16 @@ def build_context(objects_filter: list = None) -> str:
 
     if not visible_objects:
         lines.append("Document is empty.")
-        return "\n".join(lines)
+    else:
+        # Object list (one line per object)
+        lines.append(f"\nObjects ({len(visible_objects)}):")
+        for obj in visible_objects:
+            lines.append(_describe_object_lean(obj))
 
-    # Object list (one line per object)
-    lines.append(f"\nObjects ({len(visible_objects)}):")
-    for obj in visible_objects:
-        lines.append(_describe_object_lean(obj))
+    # Drawing pages listing
+    pages_context = _get_pages_context()
+    if pages_context:
+        lines.append(pages_context)
 
     # Selection details
     selection_details = _get_selection_details()
@@ -329,7 +364,7 @@ def build_context(objects_filter: list = None) -> str:
         lines.append(f"\n{selection_details}")
 
     # Expressions (parametric relationships)
-    expressions = _extract_expressions(objects)
+    expressions = _extract_expressions(objects if visible_objects else [])
     if expressions:
         lines.append(_describe_expressions(expressions))
 
