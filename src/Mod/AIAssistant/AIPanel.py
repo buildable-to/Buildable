@@ -72,7 +72,7 @@ class AIAssistantDockWidget(QtWidgets.QDockWidget):
     """Main AI Assistant dock widget with modern chat interface."""
 
     def __init__(self, parent=None):
-        super().__init__("AI Assistant", parent)
+        super().__init__("3D Assistant", parent)
         self.setObjectName("AIAssistantPanel")
         self.setAllowedAreas(
             QtCore.Qt.LeftDockWidgetArea | QtCore.Qt.RightDockWidgetArea
@@ -163,7 +163,7 @@ class AIAssistantDockWidget(QtWidgets.QDockWidget):
         title_area_layout.setContentsMargins(0, 6, 0, 6)
         title_area_layout.setSpacing(0)
 
-        title = QtWidgets.QLabel("AI Assistant")
+        title = QtWidgets.QLabel("3D Assistant")
         title.setStyleSheet(f"""
             QLabel {{
                 color: {Theme.COLORS['text_primary']};

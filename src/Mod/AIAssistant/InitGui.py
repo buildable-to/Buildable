@@ -54,8 +54,8 @@ class AIAssistantCommand:
 
     def GetResources(self):
         return {
-            "MenuText": "AI Assistant",
-            "ToolTip": "Toggle AI Assistant panel",
+            "MenuText": "3D Assistant",
+            "ToolTip": "Toggle 3D Assistant panel",
             "Accel": "Ctrl+Shift+A",
         }
 
@@ -84,7 +84,7 @@ def _setup_menu():
                 if "View" in action.text():
                     menu = action.menu()
                     if menu:
-                        act = QtGui.QAction("AI Assistant", mw)
+                        act = QtGui.QAction("3D Assistant", mw)
                         act.setShortcut("Ctrl+Shift+A")
                         # Use the registered command instead of direct function reference
                         act.triggered.connect(lambda: FreeCADGui.runCommand("Std_AIAssistant"))
