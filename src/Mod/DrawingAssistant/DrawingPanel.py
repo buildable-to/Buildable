@@ -156,23 +156,19 @@ class DrawingAssistantDockWidget(QtWidgets.QDockWidget):
         header_layout.setContentsMargins(14, 0, 10, 0)
         header_layout.setSpacing(6)
 
-        # Title area with main title and session subtitle
+        # Title area with mode switcher and session subtitle
         title_area = QtWidgets.QWidget()
         title_area.setStyleSheet("background: transparent;")
         title_area_layout = QtWidgets.QVBoxLayout(title_area)
         title_area_layout.setContentsMargins(0, 6, 0, 6)
-        title_area_layout.setSpacing(0)
+        title_area_layout.setSpacing(2)
 
-        title = QtWidgets.QLabel("Drawing Assistant")
-        title.setStyleSheet(f"""
-            QLabel {{
-                color: {Theme.COLORS['text_primary']};
-                font-weight: {Theme.FONTS['weight_semibold']};
-                font-size: {Theme.FONTS['size_base']};
-                background: transparent;
-            }}
-        """)
-        title_area_layout.addWidget(title)
+        from AIAssistant.widgets.mode_switcher import ModeSegmentedControl
+        self._mode_switcher = ModeSegmentedControl(
+            active_mode="drawing", theme_module=Theme
+        )
+        self._mode_switcher.modeChanged.connect(self._on_mode_changed)
+        title_area_layout.addWidget(self._mode_switcher)
 
         # Session title label
         self._session_label = QtWidgets.QLabel("")
@@ -1331,6 +1327,17 @@ Return ONLY the Python code in a ```python code block."""
         else:
             self._last_execution_error = message
             self._chat.add_error_message(f"Execution error: {message}")
+
+    def _on_mode_changed(self, mode: str):
+        """Handle segmented control mode change."""
+        if mode == "3d":
+            try:
+                grp = FreeCAD.ParamGet("User parameter:BaseApp/Preferences/AIAssistant")
+                grp.SetString("LastMode", mode)
+            except Exception:
+                pass
+            import AIAssistant
+            AIAssistant.show()
 
     def _on_clear(self):
         """Clear the chat UI."""
