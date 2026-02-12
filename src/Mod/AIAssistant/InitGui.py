@@ -104,10 +104,10 @@ def _setup_document_observer():
     global _observer
 
     def _show_panel_safe():
-        """Show panel using module import to avoid scope issues."""
+        """Show chooser or last-used mode on document open."""
         try:
             import AIAssistant
-            AIAssistant.show()
+            AIAssistant.show_chooser()
         except Exception as e:
             FreeCAD.Console.PrintWarning(f"AIAssistant: Failed to show panel: {e}\n")
 
