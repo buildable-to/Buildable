@@ -15,10 +15,86 @@ Usage:
 __version__ = "0.1.0"
 
 _panel = None
+_chooser = None
+
+
+def _get_last_mode():
+    """Get last used assistant mode from FreeCAD parameters."""
+    try:
+        import FreeCAD
+        grp = FreeCAD.ParamGet("User parameter:BaseApp/Preferences/AIAssistant")
+        return grp.GetString("LastMode", "") or None
+    except Exception:
+        return None
+
+
+def _save_last_mode(mode):
+    """Save last used assistant mode to FreeCAD parameters."""
+    try:
+        import FreeCAD
+        grp = FreeCAD.ParamGet("User parameter:BaseApp/Preferences/AIAssistant")
+        grp.SetString("LastMode", mode)
+    except Exception:
+        pass
+
+
+def show_chooser():
+    """Show the mode chooser (first time) or restore last used mode."""
+    global _chooser
+
+    last = _get_last_mode()
+    if last:
+        if last == "drawing":
+            import DrawingAssistant
+            DrawingAssistant.show()
+        else:
+            show()
+        return
+
+    # First time — show chooser
+    import FreeCAD
+    import FreeCADGui
+    from PySide6 import QtCore, QtWidgets
+
+    mw = FreeCADGui.getMainWindow()
+    if mw is None:
+        return
+
+    # Hide both panels if they exist
+    for name in ("AIAssistantDockWidget", "DrawingAssistantDockWidget"):
+        panel = mw.findChild(QtWidgets.QDockWidget, name)
+        if panel and panel.isVisible():
+            panel.hide()
+
+    if _chooser is None:
+        from .widgets.welcome_chooser import AssistantChooserDockWidget
+        from . import Theme
+        _chooser = AssistantChooserDockWidget(theme_module=Theme)
+        _chooser.setObjectName("AssistantChooserDockWidget")
+        _chooser.modeChosen.connect(_on_chooser_mode)
+        mw.addDockWidget(QtCore.Qt.RightDockWidgetArea, _chooser)
+
+    _chooser.show()
+    _chooser.raise_()
+
+
+def _on_chooser_mode(mode):
+    """Handle mode selection from chooser."""
+    global _chooser
+    _save_last_mode(mode)
+    if _chooser:
+        _chooser.hide()
+        _chooser.deleteLater()
+        _chooser = None
+    if mode == "3d":
+        show()
+    else:
+        import DrawingAssistant
+        DrawingAssistant.show()
 
 
 def show():
-    """Show the AI Assistant panel (hides Drawing Assistant if visible)."""
+    """Show the 3D Assistant panel (hides Drawing Assistant if visible)."""
     global _panel
     import FreeCAD
     import FreeCADGui
@@ -35,25 +111,31 @@ def show():
     if drawing_panel and drawing_panel.isVisible():
         drawing_panel.hide()
 
+    # Hide chooser if present
+    chooser = mw.findChild(QtWidgets.QDockWidget, "AssistantChooserDockWidget")
+    if chooser and chooser.isVisible():
+        chooser.hide()
+
     if _panel is None:
         _panel = AIPanel.AIAssistantDockWidget()
         _panel.setObjectName("AIAssistantDockWidget")
         mw.addDockWidget(QtCore.Qt.RightDockWidgetArea, _panel)
 
+    _save_last_mode("3d")
     _panel.show()
     _panel.raise_()
     return _panel
 
 
 def hide():
-    """Hide the AI Assistant panel."""
+    """Hide the 3D Assistant panel."""
     global _panel
     if _panel:
         _panel.hide()
 
 
 def toggle():
-    """Toggle the AI Assistant panel."""
+    """Toggle the 3D Assistant panel."""
     global _panel
     if _panel is None:
         show()

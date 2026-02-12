@@ -35,10 +35,21 @@ def show():
     if ai_panel and ai_panel.isVisible():
         ai_panel.hide()
 
+    # Hide chooser if present
+    chooser = mw.findChild(QtWidgets.QDockWidget, "AssistantChooserDockWidget")
+    if chooser and chooser.isVisible():
+        chooser.hide()
+
     if _panel is None:
         _panel = DrawingPanel.DrawingAssistantDockWidget()
         _panel.setObjectName("DrawingAssistantDockWidget")
         mw.addDockWidget(QtCore.Qt.RightDockWidgetArea, _panel)
+
+    # Save mode preference
+    try:
+        FreeCAD.ParamGet("User parameter:BaseApp/Preferences/AIAssistant").SetString("LastMode", "drawing")
+    except Exception:
+        pass
 
     _panel.show()
     _panel.raise_()
