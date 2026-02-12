@@ -123,8 +123,8 @@ class DrawingAssistantDockWidget(QtWidgets.QDockWidget):
         self._setup_ui()
         self._connect_signals()
 
-        # Ensure drawing file exists for saved documents
-        self._ensure_source_file()
+        # Ensure pages/ directory exists for saved documents
+        self._ensure_pages_dir()
 
         # Ensure CLAUDE.md exists for Claude Code backend
         self._ensure_claude_md()
@@ -586,11 +586,11 @@ class DrawingAssistantDockWidget(QtWidgets.QDockWidget):
         # Update project directory (handles document changes)
         self._update_project_dir()
 
-        # Ensure drawing file exists
-        self._ensure_source_file()
+        # Ensure pages/ directory exists
+        self._ensure_pages_dir()
 
-        # Backup drawing.py before Claude potentially edits it
-        SourceManager.backup_source()
+        # Backup pages/ before Claude potentially edits them
+        SourceManager.backup_pages()
 
         # Build context if enabled
         context = ""
@@ -698,14 +698,13 @@ Do NOT write any code. Only output the numbered plan steps."""
             self.pending_input = None
             return
 
-        # Check if Claude edited drawing.py directly
+        # Check if Claude edited page files directly
         if getattr(self.llm, 'source_was_edited', False):
+            edited = getattr(self.llm, 'edited_files', [])
             FreeCAD.Console.PrintMessage(
-                "DrawingAssistant: Detected direct drawing.py edit - using diff preview\n"
+                f"DrawingAssistant: Detected page edit(s): {edited} - using diff preview\n"
             )
-            ActivityLogger.log_drawing_edited(
-                len(tool_calls), file_path=SourceManager.get_source_path()
-            )
+            ActivityLogger.log_drawing_edited(len(tool_calls))
 
             # Capture snapshot now (document state is still pre-execution)
             snapshot_id, snapshot_path = SnapshotManager.save_snapshot()
@@ -719,7 +718,7 @@ Do NOT write any code. Only output the numbered plan steps."""
             self.pending_input = None
             return
 
-        # Claude didn't edit drawing.py - clear backup
+        # Claude didn't edit any pages - clear backup
         SourceManager.clear_backup()
 
         FreeCAD.Console.PrintMessage(
@@ -747,9 +746,9 @@ Do NOT write any code. Only output the numbered plan steps."""
         self.pending_input = None
 
     def _handle_source_edit_response(self, response: str, attempt: int = 1):
-        """Handle response where Claude edited drawing.py directly.
+        """Handle response where Claude edited page files directly.
 
-        1. Get NEW drawing.py from disk (Claude already edited it)
+        1. Get NEW pages/ content from disk (Claude already edited them)
         2. Create persistent sandbox and execute
         3. If self-review enabled: Claude reviews sandbox, can iterate
         4. Show preview to user (after Claude is satisfied)
@@ -760,17 +759,17 @@ Do NOT write any code. Only output the numbered plan steps."""
             response: Claude's text response (explanation of changes)
             attempt: Current attempt number (1-based) for auto-fix loop
         """
-        old_source = SourceManager.get_backup_content()
-        new_source = SourceManager.read_source()
+        old_source = SourceManager.get_backup_combined()
+        new_source = SourceManager.read_all_pages()
 
         FreeCAD.Console.PrintMessage(
-            f"DrawingAssistant: Old drawing length: {len(old_source) if old_source else 0}, "
-            f"New drawing length: {len(new_source) if new_source else 0}\n"
+            f"DrawingAssistant: Old pages length: {len(old_source) if old_source else 0}, "
+            f"New pages length: {len(new_source) if new_source else 0}\n"
         )
 
         # If no backup or no change, just show the text response
         if not old_source or old_source == new_source:
-            FreeCAD.Console.PrintMessage("DrawingAssistant: No drawing changes detected\n")
+            FreeCAD.Console.PrintMessage("DrawingAssistant: No page changes detected\n")
             SourceManager.clear_backup()
             tool_calls = getattr(self.llm, 'last_tool_calls', None)
             self._chat.add_assistant_message(response, tool_calls=tool_calls)
@@ -817,7 +816,7 @@ Do NOT write any code. Only output the numbered plan steps."""
                     f"DrawingAssistant: Max auto-fix attempts ({MAX_FIX_ATTEMPTS}) reached, giving up\n"
                 )
                 self._chat.hide_typing()
-                SourceManager.restore_source()
+                SourceManager.restore_pages()
                 self._chat.add_error_message(
                     f"Code execution failed after {MAX_FIX_ATTEMPTS} fix attempts.\n\n"
                     f"Last error:\n```\n{exec_error[:500]}\n```"
@@ -832,7 +831,7 @@ Do NOT write any code. Only output the numbered plan steps."""
         else:
             FreeCAD.Console.PrintWarning(f"DrawingAssistant: Diff preview failed: {error_msg}\n")
             self._chat.hide_typing()
-            SourceManager.restore_source()
+            SourceManager.restore_pages()
             self._chat.add_error_message(f"Preview failed: {error_msg}")
 
     def _attempt_preview_with_autofix(self, description: str, code: str,
@@ -952,24 +951,24 @@ Return ONLY the fixed Python code in a ```python code block, no explanation need
 
     def _request_source_fix(self, failed_source: str, error: str,
                             original_response: str, attempt: int):
-        """Send execution error to Claude and request fixed drawing.py."""
+        """Send execution error to Claude and request fixed page files."""
         self._source_fix_original_response = original_response
         self._source_fix_attempt = attempt
 
-        fix_prompt = f"""The drawing.py you just edited failed to execute with this error:
+        fix_prompt = f"""The page file(s) you just edited failed to execute with this error:
 
 ```
 {error[:1500]}
 ```
 
-Please fix the drawing.py file using the Edit tool. Common issues:
+Please fix the page file using the Edit tool. Common issues:
 - Draft.make_circle(radius, placement): 2nd arg must be FreeCAD.Placement, NOT a Vector
 - Draft.make_linear_dimension() ViewObject has NO ArrowSize attribute
 - Using undefined variables
 - Object "failed to compute": Usually means incorrect parameter types or values
 - Geometry validation failed: Check API usage
 
-Read drawing.py to understand what went wrong, then fix it."""
+Read the relevant page file to understand what went wrong, then fix it."""
 
         self._source_fix_worker = LLMWorker(self.llm, fix_prompt, "", [])
         self._source_fix_worker.finished.connect(self._on_source_fix_response)
@@ -983,24 +982,24 @@ Read drawing.py to understand what went wrong, then fix it."""
 
         if getattr(self.llm, 'source_was_edited', False):
             FreeCAD.Console.PrintMessage(
-                f"DrawingAssistant: Claude fixed drawing.py, retrying preview (attempt {attempt + 1})\n"
+                f"DrawingAssistant: Claude fixed page files, retrying preview (attempt {attempt + 1})\n"
             )
             self._handle_source_edit_response(original_response, attempt + 1)
         else:
             FreeCAD.Console.PrintWarning(
-                "DrawingAssistant: Claude didn't edit drawing.py in fix response\n"
+                "DrawingAssistant: Claude didn't edit any pages in fix response\n"
             )
             self._chat.hide_typing()
-            SourceManager.restore_source()
+            SourceManager.restore_pages()
             self._chat.add_error_message(
-                f"Could not auto-fix drawing.py. Claude's response:\n\n{response}"
+                f"Could not auto-fix page files. Claude's response:\n\n{response}"
             )
 
     def _on_source_fix_error(self, error_msg: str):
         """Handle error from source fix request."""
         FreeCAD.Console.PrintError(f"DrawingAssistant: Source fix request failed: {error_msg}\n")
         self._chat.hide_typing()
-        SourceManager.restore_source()
+        SourceManager.restore_pages()
         self._chat.add_error_message(f"Auto-fix failed: {error_msg}")
 
     def _parse_response(self, response: str) -> tuple:
@@ -1116,14 +1115,14 @@ Read drawing.py to understand what went wrong, then fix it."""
 
         self._preview_manager.clear_preview()
 
-        # Check if this is a drawing edit (backup exists) vs old-style patch
+        # Check if this is a page edit (backup exists) vs old-style patch
         if SourceManager.has_backup():
-            FreeCAD.Console.PrintMessage("DrawingAssistant: Executing edited drawing.py\n")
-            source_content = SourceManager.read_source()
+            FreeCAD.Console.PrintMessage("DrawingAssistant: Executing edited pages\n")
+            source_content = SourceManager.read_all_pages()
 
             before_snapshot = SnapshotManager.capture_current_state()
 
-            # Clear all document objects before re-executing drawing.py
+            # Clear all document objects before re-executing pages
             # IMPORTANT: Reverse order to avoid SIGSEGV from dangling links
             doc = FreeCAD.ActiveDocument
             if doc:
@@ -1140,7 +1139,11 @@ Read drawing.py to understand what went wrong, then fix it."""
                     except Exception:
                         pass
 
-            # Execute the new drawing.py
+                # Flush document state after clearing — TechDraw keeps internal
+                # references that cause 'NoneType' errors if not cleaned up
+                doc.recompute()
+
+            # Execute the new pages
             success, message, warnings = CodeExecutor.execute(source_content)
             if warnings:
                 self._last_execution_warnings.extend(warnings)
@@ -1164,10 +1167,10 @@ Read drawing.py to understand what went wrong, then fix it."""
                 FreeCAD.Console.PrintError(
                     f"DrawingAssistant: Drawing execution failed: {message}\n"
                 )
-                SourceManager.restore_source()
+                SourceManager.restore_pages()
 
-                # Re-execute the restored drawing.py to restore document objects
-                restored_source = SourceManager.read_source()
+                # Re-execute the restored pages to restore document objects
+                restored_source = SourceManager.read_all_pages()
                 if restored_source:
                     FreeCAD.Console.PrintMessage(
                         "DrawingAssistant: Re-executing backup to restore objects\n"
@@ -1186,10 +1189,10 @@ Read drawing.py to understand what went wrong, then fix it."""
 
         self._preview_manager.cancel()
 
-        # Restore drawing.py from backup if this was a drawing edit
+        # Restore pages from backup if this was a page edit
         if SourceManager.has_backup():
-            FreeCAD.Console.PrintMessage("DrawingAssistant: Restoring drawing.py from backup\n")
-            SourceManager.restore_source()
+            FreeCAD.Console.PrintMessage("DrawingAssistant: Restoring pages from backup\n")
+            SourceManager.restore_pages()
             ActivityLogger.log_drawing_restored()
 
         self._chat.add_system_message("Preview cancelled")
@@ -1323,8 +1326,6 @@ Return ONLY the Python code in a ```python code block."""
             self._last_screenshot = self._capture_screenshot()
             self._capture_multi_angle_screenshots()
 
-            SourceManager.append_code(code)
-
             self._self_review_attempt = 0
             self._run_self_review(change_set)
         else:
@@ -1378,7 +1379,7 @@ Return ONLY the Python code in a ```python code block."""
         msg_box.setText("Please save your document first.")
         msg_box.setInformativeText(
             "The Drawing Assistant needs a saved document to store:\n"
-            "• drawing.py - Your drawing's code history\n"
+            "• pages/ - Per-page drawing scripts\n"
             "• Sessions and snapshots\n\n"
             "Would you like to save now?"
         )
@@ -1394,7 +1395,7 @@ Return ONLY the Python code in a ```python code block."""
             try:
                 FreeCADGui.runCommand("Std_SaveAs", 0)
                 self._update_project_dir()
-                self._ensure_source_file()
+                self._ensure_pages_dir()
                 self._ensure_claude_md()
             except Exception as e:
                 FreeCAD.Console.PrintError(f"DrawingAssistant: Save failed: {e}\n")
@@ -1423,12 +1424,12 @@ Return ONLY the Python code in a ```python code block."""
                 f"DrawingAssistant: Failed to create CLAUDE.md: {e}\n"
             )
 
-    def _ensure_source_file(self):
-        """Ensure drawing file exists for current document."""
+    def _ensure_pages_dir(self):
+        """Ensure pages/ directory exists for current document."""
         doc = FreeCAD.ActiveDocument
         if doc and doc.FileName:
             if not SourceManager.exists():
-                SourceManager.init_source_file()
+                SourceManager.init_pages_dir()
 
     def _capture_screenshot(self) -> str:
         """Capture current viewport as base64 PNG."""
@@ -1506,7 +1507,7 @@ IMPORTANT: Check carefully for:
 
 If the result looks CORRECT, respond with just: "LOOKS_GOOD"
 
-If there are PROBLEMS, explain briefly what's wrong and edit drawing.py to fix them."""
+If there are PROBLEMS, explain briefly what's wrong and edit the relevant page file to fix them."""
 
         self._self_review_worker = LLMWorker(
             self.llm, review_prompt, "", [],
@@ -1535,10 +1536,10 @@ If there are PROBLEMS, explain briefly what's wrong and edit drawing.py to fix t
 
         if getattr(self.llm, 'source_was_edited', False):
             FreeCAD.Console.PrintMessage(
-                "DrawingAssistant: Self-review found issues, Claude edited drawing.py. Re-executing...\n"
+                "DrawingAssistant: Self-review found issues, Claude edited pages. Re-executing...\n"
             )
 
-            source_content = SourceManager.read_source()
+            source_content = SourceManager.read_all_pages()
 
             doc = FreeCAD.ActiveDocument
             if doc:
@@ -1551,6 +1552,10 @@ If there are PROBLEMS, explain briefly what's wrong and edit drawing.py to fix t
                         doc.removeObject(obj_name)
                     except Exception:
                         pass
+
+                # Flush document state after clearing — TechDraw keeps internal
+                # references that cause 'NoneType' errors if not cleaned up
+                doc.recompute()
 
             success, message, warnings = CodeExecutor.execute(source_content)
             if warnings:
@@ -1798,7 +1803,7 @@ CRITICAL CHECKS:
 
 If it looks correct: Start your response with [APPROVED] then describe what you see.
 
-If there are problems: Explain what's wrong and edit drawing.py to fix them."""
+If there are problems: Explain what's wrong and edit the relevant page file to fix them."""
 
         self._sandbox_review_worker = LLMWorker(
             self.llm, review_prompt, "", [],
@@ -1831,10 +1836,10 @@ If there are problems: Explain what's wrong and edit drawing.py to fix them."""
 
         if getattr(self.llm, 'source_was_edited', False):
             FreeCAD.Console.PrintMessage(
-                "DrawingAssistant: Claude edited drawing.py during sandbox review, re-executing...\n"
+                "DrawingAssistant: Claude edited pages during sandbox review, re-executing...\n"
             )
 
-            new_source = SourceManager.read_source()
+            new_source = SourceManager.read_all_pages()
             success, error_msg = self._preview_manager.re_execute_in_sandbox(
                 self._sandbox_session, new_source
             )
@@ -1890,7 +1895,7 @@ If there are problems: Explain what's wrong and edit drawing.py to fix them."""
         auto_approve = self.auto_accept_action.isChecked()
 
         self._chat.add_preview_message(
-            description=self._sandbox_review_response or "Drawing.py modified",
+            description=self._sandbox_review_response or "Page files modified",
             preview_items=preview_items,
             code=self._sandbox_session.source_content,
             is_deletion=False,
