@@ -52,6 +52,8 @@ SET(AIAssistant_widgets
     widgets/activity.py
     widgets/context_selection.py
     widgets/progress_indicator.py
+    widgets/mode_switcher.py
+    widgets/welcome_chooser.py
 )
 
 # External integrations
