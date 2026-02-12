@@ -463,12 +463,46 @@ class PreviewManager:
         if self._is_deletion and self._deletion_targets:
             return self._get_deletion_summary()
 
-        # For creation preview, return info from temp doc
-        if not self._temp_doc:
+        # For creation preview, return info from temp doc or preview objects in main doc
+        source_doc = self._temp_doc
+        if not source_doc and self._preview_objects and self._main_doc_name:
+            # Sandbox flow: preview objects are in main doc (from commit_sandbox_to_preview)
+            source_doc = FreeCAD.getDocument(self._main_doc_name)
+            if source_doc:
+                result = []
+                for preview_name in self._preview_objects:
+                    obj = source_doc.getObject(preview_name)
+                    if not obj:
+                        continue
+                    # Strip __preview_ prefix to get original name
+                    original_name = preview_name.replace("__preview_", "", 1)
+                    # Strip [Preview] prefix from label
+                    label = obj.Label
+                    if label.startswith("[Preview] "):
+                        label = label[len("[Preview] "):]
+
+                    type_name = obj.TypeId.split("::")[-1] if "::" in obj.TypeId else obj.TypeId
+                    dimensions = {}
+                    if hasattr(obj, 'Shape') and obj.Shape and not obj.Shape.isNull():
+                        bbox = obj.Shape.BoundBox
+                        dimensions = {
+                            "width": round(bbox.XLength, 2),
+                            "depth": round(bbox.YLength, 2),
+                            "height": round(bbox.ZLength, 2),
+                        }
+                    result.append({
+                        "name": original_name,
+                        "label": label,
+                        "type": type_name,
+                        "dimensions": dimensions,
+                    })
+                return result
+
+        if not source_doc:
             return []
 
         result = []
-        for obj in self._temp_doc.Objects:
+        for obj in source_doc.Objects:
             # Skip origin objects
             if obj.TypeId in ("App::Origin", "App::Plane", "App::Line"):
                 continue
