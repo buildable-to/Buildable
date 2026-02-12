@@ -1,68 +1,45 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 """
-Source Manager - Maintain generating Python script alongside FreeCAD document.
+Source Manager - Manage per-page drawing scripts for multi-page drawing sets.
 
-Accumulates all successfully executed AI-generated code into a single Python
-file that can regenerate the document. Stored in project subfolder:
-  {doc_stem}/drawing.py
+Drawing pages are stored as individual Python scripts in a pages/ directory:
+  {doc_stem}/pages/_shared.py        — Shared constants, executed first
+  {doc_stem}/pages/001_cover.py      — First drawing sheet
+  {doc_stem}/pages/002_notes.py      — Second drawing sheet
+  ...
 
-This provides:
-1. Full context for the LLM when making modifications
-2. Version-controllable source of truth
-3. Ability to regenerate document from scratch
+All pages are executed in sorted order with a shared namespace.
+This provides version-controllable, per-page source of truth.
 """
 
 from datetime import datetime
 from pathlib import Path
-from typing import Optional, List, Tuple
+from typing import Optional, List, Dict, Any
 
 import FreeCAD
 
 
-# Buffer for code when document isn't saved yet
-# List of (code, description, timestamp) tuples
-_pending_code: List[Tuple[str, str, str]] = []
+# Backup of all page files before Claude edits them
+# Maps filename -> content for every .py file in pages/
+_pages_backup: Optional[Dict[str, str]] = None
 
 # Document observer instance (set on module load)
 _observer = None
 
-# Backup of drawing.py content before Claude edits it
-# Used for restore on cancel and diff preview
-_source_backup: Optional[str] = None
-
 
 class _SourceManagerObserver:
-    """
-    Document observer that flushes pending code when document is saved.
-
-    This ensures code isn't lost if user saves document but doesn't
-    execute any more AI code afterward.
-    """
+    """Document observer that creates pages/ directory when document is saved."""
 
     def slotStartSaveDocument(self, doc, filename):
-        """Called when document save begins - initialize drawing file and flush pending code."""
-        global _pending_code
-
-        # Build source path in project subfolder: parent/doc_stem/drawing.py
+        """Called when document save begins - ensure pages/ directory exists."""
         file_path = Path(filename)
         project_dir = file_path.parent / file_path.stem
-        project_dir.mkdir(parents=True, exist_ok=True)
-        source_path = project_dir / "drawing.py"
+        pages_dir = project_dir / "pages"
+        pages_dir.mkdir(parents=True, exist_ok=True)
 
-        try:
-            # Always ensure drawing file exists (proactive creation)
-            if not source_path.exists():
-                init_source_file(source_path, doc.Name)
-
-            # Flush any pending code
-            if _pending_code:
-                FreeCAD.Console.PrintMessage(
-                    f"SourceManager: Flushing {len(_pending_code)} pending code blocks\n"
-                )
-                _flush_pending_to_file(source_path)
-
-        except Exception as e:
-            FreeCAD.Console.PrintWarning(f"SourceManager: Failed on save: {e}\n")
+        shared_path = pages_dir / "_shared.py"
+        if not shared_path.exists():
+            _init_shared_file(shared_path, doc.Name)
 
 
 def _register_observer():
@@ -95,422 +72,374 @@ def _unregister_observer():
 _register_observer()
 
 
-def get_source_path() -> Optional[Path]:
-    """
-    Get path to drawing file for active document.
+def _init_shared_file(shared_path: Path, doc_name: str) -> None:
+    """Create _shared.py with boilerplate."""
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    shared_path.write_text(
+        f"# FreeCAD Drawing Project - {doc_name}\n"
+        f"# Created: {timestamp}\n"
+        "#\n"
+        "# Shared constants and helpers for all pages.\n"
+        "# This file is executed first; its variables are available to all page scripts.\n"
+        "#\n"
+        "\n"
+        "import FreeCAD\n"
+        "import Draft\n"
+        "import math\n"
+        "\n"
+        'doc = FreeCAD.ActiveDocument or FreeCAD.newDocument("Drawing")\n'
+        "\n"
+        "# === Project Constants ===\n"
+        "# Add shared dimensions, grid spacing, material specs here.\n"
+        "# Example:\n"
+        "# GRID_SPACING_X = 6000  # mm\n"
+        "# GRID_SPACING_Y = 6000  # mm\n"
+        '# CONCRETE_CLASS = "C25/30"\n'
+        '# REBAR_GRADE = "A500c"\n',
+        encoding="utf-8",
+    )
+    FreeCAD.Console.PrintMessage(f"SourceManager: Initialized {shared_path.name}\n")
 
-    The drawing file is stored in project subfolder: parent/doc_stem/drawing.py
+
+# =============================================================================
+# Path helpers
+# =============================================================================
+
+
+def get_pages_dir() -> Optional[Path]:
+    """Get path to pages/ directory for active document.
 
     Returns:
-        Path to drawing file, or None if document not saved
+        Path to {project_dir}/pages/, or None if document not saved.
     """
     doc = FreeCAD.ActiveDocument
     if not doc or not doc.FileName:
         return None
 
     doc_path = Path(doc.FileName)
-    return doc_path.parent / doc_path.stem / "drawing.py"
+    return doc_path.parent / doc_path.stem / "pages"
 
 
-# Lines to strip from code blocks (already in header)
-# FreeCAD uses both FreeCAD.* and App.* (App is an alias)
-_BOILERPLATE_PATTERNS = [
-    "import FreeCAD",
-    "import Draft",
-    "import TechDraw",
-    "import Spreadsheet",
-    "import Part",
-    "from FreeCAD import",
-    "from Draft import",
-    "doc = FreeCAD.ActiveDocument or FreeCAD.newDocument",
-    "doc = FreeCAD.ActiveDocument",
-    "doc = App.ActiveDocument or App.newDocument",
-    "doc = App.ActiveDocument",
-    "doc = App.activeDocument()",
-    "doc = FreeCAD.activeDocument()",
-    "if doc is None:",
-    "doc = FreeCAD.newDocument(",
-    "doc = App.newDocument(",
-]
+def list_pages() -> List[Path]:
+    """List all page files in execution order.
 
-
-def _clean_boilerplate(code: str) -> str:
-    """
-    Remove redundant boilerplate from code block.
-
-    Since the drawing file header already has imports and doc setup,
-    we strip these from individual code blocks to keep the file clean.
-    """
-    lines = code.strip().split("\n")
-    cleaned = []
-    skip_next_indent = False
-
-    for line in lines:
-        stripped = line.strip()
-
-        # Skip empty lines at the start
-        if not cleaned and not stripped:
-            continue
-
-        # Check if line matches boilerplate pattern
-        is_boilerplate = False
-        for pattern in _BOILERPLATE_PATTERNS:
-            if stripped.startswith(pattern):
-                is_boilerplate = True
-                # If it's an "if doc is None:" we need to skip the next indented line too
-                if stripped == "if doc is None:":
-                    skip_next_indent = True
-                break
-
-        if is_boilerplate:
-            continue
-
-        # Skip indented line after "if doc is None:"
-        if skip_next_indent and line.startswith((" ", "\t")):
-            skip_next_indent = False
-            continue
-        skip_next_indent = False
-
-        cleaned.append(line)
-
-    # Remove leading/trailing empty lines
-    while cleaned and not cleaned[0].strip():
-        cleaned.pop(0)
-    while cleaned and not cleaned[-1].strip():
-        cleaned.pop()
-
-    return "\n".join(cleaned)
-
-
-def append_code(code: str, description: str = "") -> bool:
-    """
-    Append executed code to the drawing file.
-
-    If the document isn't saved yet, buffers the code in memory.
-    When the document is saved (has a FileName), flushes the buffer
-    and writes to the drawing file.
-
-    Args:
-        code: Python code that was successfully executed
-        description: Optional description (e.g., from LLM response)
+    Returns pages sorted by filename (numeric prefix ensures order).
+    Excludes _shared.py (it's a dependency, not a page).
 
     Returns:
-        True if saved/buffered successfully, False otherwise
+        Sorted list of Path objects for each page .py file.
     """
-    global _pending_code
+    pages_dir = get_pages_dir()
+    if not pages_dir or not pages_dir.exists():
+        return []
+    return sorted(pages_dir.glob("[0-9]*.py"))
 
-    # Clean boilerplate before saving
-    code = _clean_boilerplate(code)
 
-    # Skip if code is empty after cleaning
-    if not code.strip():
-        return True
+def get_shared_path() -> Optional[Path]:
+    """Get path to _shared.py constants file.
 
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    source_path = get_source_path()
+    Returns:
+        Path to {pages_dir}/_shared.py, or None if not saved.
+    """
+    pages_dir = get_pages_dir()
+    if not pages_dir:
+        return None
+    return pages_dir / "_shared.py"
 
-    # If document not saved yet, buffer the code
-    if not source_path:
-        _pending_code.append((code, description, timestamp))
-        FreeCAD.Console.PrintMessage(
-            f"SourceManager: Buffered code ({len(_pending_code)} blocks pending, save document to persist)\n"
-        )
-        return True
 
+# =============================================================================
+# Reading
+# =============================================================================
+
+
+def read_page(page_path: Path) -> str:
+    """Read a single page file.
+
+    Args:
+        page_path: Absolute path to the page .py file.
+
+    Returns:
+        File content as string, or empty string on error.
+    """
     try:
-        # Flush any pending code first (document was just saved)
-        if _pending_code:
-            _flush_pending_to_file(source_path)
-
-        # Write the new code block
-        _write_code_block(source_path, code, description, timestamp)
-        return True
-
-    except Exception as e:
-        FreeCAD.Console.PrintWarning(f"SourceManager: Failed to save: {e}\n")
-        return False
-
-
-def _flush_pending_to_file(source_path: Path) -> None:
-    """Flush all pending code blocks to the drawing file."""
-    global _pending_code
-
-    if not _pending_code:
-        return
-
-    FreeCAD.Console.PrintMessage(
-        f"SourceManager: Flushing {len(_pending_code)} pending code blocks to {source_path.name}\n"
-    )
-
-    for code, description, timestamp in _pending_code:
-        _write_code_block(source_path, code, description, timestamp)
-
-    _pending_code = []
-
-
-def _write_code_block(source_path: Path, code: str, description: str, timestamp: str) -> None:
-    """Write a single code block to the drawing file."""
-    # Create file with header if new
-    if not source_path.exists():
-        doc_name = FreeCAD.ActiveDocument.Name if FreeCAD.ActiveDocument else "Drawing"
-        with open(source_path, "w", encoding="utf-8") as f:
-            f.write(f"# FreeCAD Drawing Source - {doc_name}\n")
-            f.write(f"# Created: {timestamp}\n")
-            f.write("#\n")
-            f.write("# This script can regenerate the document.\n")
-            f.write("# Run in FreeCAD's Python console or as a macro.\n")
-            f.write("#\n\n")
-            f.write("import FreeCAD\n")
-            f.write("import Draft\n\n")
-            f.write('doc = FreeCAD.ActiveDocument or FreeCAD.newDocument("Drawing")\n\n')
-
-    # Append code block
-    with open(source_path, "a", encoding="utf-8") as f:
-        f.write(f"\n# === {timestamp} ===\n")
-        if description:
-            # Add description as comments (limit to 3 lines)
-            for line in description.strip().split("\n")[:3]:
-                f.write(f"# {line}\n")
-        f.write(code.strip())
-        f.write("\n")
-
-
-def read_source() -> str:
-    """
-    Read current drawing file content, including any pending (unsaved) code.
-
-    Returns:
-        Drawing file content plus pending code, or empty string if none
-    """
-    parts = []
-
-    # Read from file if it exists
-    source_path = get_source_path()
-    if source_path and source_path.exists():
-        try:
-            with open(source_path, "r", encoding="utf-8") as f:
-                parts.append(f.read())
-        except Exception:
-            pass
-
-    # Add pending code (not yet written to file)
-    if _pending_code:
-        if not parts:
-            # No file yet, add a header
-            parts.append("# FreeCAD Drawing Source (unsaved document)\n")
-            parts.append("# Save the document to persist this code.\n\n")
-            parts.append("import FreeCAD\n")
-            parts.append("import Draft\n\n")
-            parts.append('doc = FreeCAD.ActiveDocument or FreeCAD.newDocument("Drawing")\n')
-
-        for code, description, timestamp in _pending_code:
-            block = f"\n# === {timestamp} (pending) ===\n"
-            if description:
-                for line in description.strip().split("\n")[:3]:
-                    block += f"# {line}\n"
-            block += code.strip() + "\n"
-            parts.append(block)
-
-    return "".join(parts)
-
-
-def get_context(max_lines: int = 50) -> str:
-    """
-    Get source code formatted for LLM context.
-
-    Shows the most recent code blocks to give the LLM understanding
-    of how objects were created.
-
-    Args:
-        max_lines: Maximum lines to include (from end of file)
-
-    Returns:
-        Formatted context string, or empty if no drawing file
-    """
-    source = read_source()
-    if not source:
+        return page_path.read_text(encoding="utf-8")
+    except Exception:
         return ""
 
-    lines = source.split("\n")
 
-    # Count code blocks (by counting timestamp headers)
-    block_count = sum(1 for line in lines if line.startswith("# === "))
+def read_all_pages() -> str:
+    """Read _shared.py + all pages concatenated in order.
 
-    # Get last N lines for recent context
-    if len(lines) > max_lines:
-        recent_lines = lines[-max_lines:]
-        truncated = True
-    else:
-        recent_lines = lines
-        truncated = False
+    Used for full document execution. Concatenates:
+    1. _shared.py (if exists)
+    2. Each page file in numeric order
 
-    recent = "\n".join(recent_lines)
+    Sections are separated by comments indicating the file boundary.
 
-    result = f"\n### Source Code History ({block_count} code blocks):\n"
-    if truncated:
-        result += f"(showing last {max_lines} lines)\n"
-    result += f"```python\n{recent}\n```"
+    Returns:
+        Combined source code string.
+    """
+    pages_dir = get_pages_dir()
+    if not pages_dir or not pages_dir.exists():
+        return ""
+
+    parts = []
+
+    # 1. _shared.py first
+    shared = pages_dir / "_shared.py"
+    if shared.exists():
+        content = read_page(shared)
+        if content.strip():
+            parts.append(f"# --- _shared.py ---\n{content}")
+
+    # 2. All numbered pages in order
+    for page_path in list_pages():
+        content = read_page(page_path)
+        if content.strip():
+            parts.append(f"\n# --- {page_path.name} ---\n{content}")
+
+    return "\n".join(parts)
+
+
+def list_pages_metadata() -> List[Dict[str, Any]]:
+    """Get metadata for all pages (for context building).
+
+    Returns list of dicts with:
+        - filename: str (e.g., "004_foundation_plan.py")
+        - path: str (absolute path)
+        - line_count: int
+        - first_comment: str (first # comment after header, used as description)
+        - has_techdraw: bool
+        - has_spreadsheet: bool
+    """
+    pages_dir = get_pages_dir()
+    if not pages_dir or not pages_dir.exists():
+        return []
+
+    result = []
+
+    # Include _shared.py
+    shared = pages_dir / "_shared.py"
+    if shared.exists():
+        result.append(_get_page_metadata(shared))
+
+    # Include numbered pages
+    for page_path in list_pages():
+        result.append(_get_page_metadata(page_path))
 
     return result
 
 
-def clear_source() -> bool:
-    """
-    Delete the drawing file to start fresh.
+def _get_page_metadata(page_path: Path) -> Dict[str, Any]:
+    """Extract metadata from a single page file."""
+    content = read_page(page_path)
+    lines = content.split("\n")
+
+    # Find first descriptive comment (skip header boilerplate)
+    first_comment = ""
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("# Page:") or stripped.startswith("# Drawing:"):
+            first_comment = stripped.lstrip("# ").strip()
+            break
+        # Skip standard boilerplate comments
+        if stripped.startswith("#") and not any(
+            kw in stripped.lower()
+            for kw in ["freecad", "created:", "shared", "script", "run in", "constants", "example"]
+        ):
+            first_comment = stripped.lstrip("# ").strip()
+            break
+
+    return {
+        "filename": page_path.name,
+        "path": str(page_path),
+        "line_count": len(lines),
+        "first_comment": first_comment,
+        "has_techdraw": "TechDraw" in content,
+        "has_spreadsheet": "Spreadsheet" in content,
+    }
+
+
+# =============================================================================
+# Initialization
+# =============================================================================
+
+
+def init_pages_dir() -> bool:
+    """Initialize the pages/ directory with _shared.py boilerplate.
+
+    Called on document save if pages/ doesn't exist.
 
     Returns:
-        True if deleted or didn't exist, False on error
+        True if created or already exists, False on error.
     """
-    source_path = get_source_path()
-    if not source_path:
+    pages_dir = get_pages_dir()
+    if not pages_dir:
         return False
 
     try:
-        if source_path.exists():
-            source_path.unlink()
+        pages_dir.mkdir(parents=True, exist_ok=True)
+        shared = pages_dir / "_shared.py"
+        if not shared.exists():
+            doc_name = FreeCAD.ActiveDocument.Name if FreeCAD.ActiveDocument else "Drawing"
+            _init_shared_file(shared, doc_name)
         return True
     except Exception as e:
-        FreeCAD.Console.PrintWarning(f"SourceManager: Failed to clear: {e}\n")
+        FreeCAD.Console.PrintWarning(f"SourceManager: Failed to init pages/: {e}\n")
         return False
 
 
 def exists() -> bool:
-    """Check if drawing file exists for current document."""
-    source_path = get_source_path()
-    return source_path is not None and source_path.exists()
-
-
-def init_source_file(source_path: Path = None, doc_name: str = None) -> bool:
-    """
-    Initialize an empty drawing file with boilerplate headers.
-
-    Creates the drawing file proactively even before any AI code runs.
-    This ensures every saved document has a corresponding drawing file.
-
-    Args:
-        source_path: Path to create file at (defaults to get_source_path())
-        doc_name: Document name for header (defaults to ActiveDocument.Name)
-
-    Returns:
-        True if created or already exists, False on error
-    """
-    if source_path is None:
-        source_path = get_source_path()
-
-    if not source_path:
-        return False  # Document not saved yet
-
-    if source_path.exists():
-        return True  # Already exists
-
-    if doc_name is None:
-        doc_name = FreeCAD.ActiveDocument.Name if FreeCAD.ActiveDocument else "Drawing"
-
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-    try:
-        with open(source_path, "w", encoding="utf-8") as f:
-            f.write(f"# FreeCAD Drawing Source - {doc_name}\n")
-            f.write(f"# Created: {timestamp}\n")
-            f.write("#\n")
-            f.write("# This script can regenerate the document.\n")
-            f.write("# Run in FreeCAD's Python console or as a macro.\n")
-            f.write("#\n\n")
-            f.write("import FreeCAD\n")
-            f.write("import Draft\n\n")
-            f.write('doc = FreeCAD.ActiveDocument or FreeCAD.newDocument("Drawing")\n\n')
-
-        FreeCAD.Console.PrintMessage(f"SourceManager: Initialized {source_path.name}\n")
-        return True
-
-    except Exception as e:
-        FreeCAD.Console.PrintWarning(f"SourceManager: Failed to initialize: {e}\n")
+    """Check if pages/ directory exists with _shared.py."""
+    pages_dir = get_pages_dir()
+    if not pages_dir:
         return False
+    return (pages_dir / "_shared.py").exists()
 
 
 # =============================================================================
-# Backup/Restore for Direct Source Editing
+# Backup / Restore for Direct Source Editing
 # =============================================================================
 
 
-def backup_source() -> bool:
-    """
-    Backup drawing.py content before Claude edits it.
+def backup_pages() -> bool:
+    """Backup ALL files in pages/ before Claude edits.
 
-    Called before each Claude Code invocation to enable:
-    1. Restore on cancel (undo Claude's edits)
-    2. Diff preview (compare OLD vs NEW drawing.py execution)
+    Stores a complete snapshot of every .py file in pages/ directory.
+    This enables:
+    1. Full restore on cancel
+    2. Diff between old and new state
 
     Returns:
-        True if backed up successfully, False if no drawing file
+        True if backed up successfully.
     """
-    global _source_backup
+    global _pages_backup
 
-    source_path = get_source_path()
-    if not source_path or not source_path.exists():
-        _source_backup = None
+    pages_dir = get_pages_dir()
+    if not pages_dir or not pages_dir.exists():
+        _pages_backup = None
         return False
 
     try:
-        _source_backup = source_path.read_text(encoding="utf-8")
-        FreeCAD.Console.PrintMessage("SourceManager: Backed up drawing.py\n")
+        _pages_backup = {}
+        for py_file in pages_dir.glob("*.py"):
+            _pages_backup[py_file.name] = py_file.read_text(encoding="utf-8")
+
+        FreeCAD.Console.PrintMessage(
+            f"SourceManager: Backed up {len(_pages_backup)} page files\n"
+        )
         return True
     except Exception as e:
         FreeCAD.Console.PrintWarning(f"SourceManager: Backup failed: {e}\n")
-        _source_backup = None
+        _pages_backup = None
         return False
 
 
-def restore_source() -> bool:
-    """
-    Restore drawing.py from backup (on cancel).
+def restore_pages() -> bool:
+    """Restore ALL pages/ files from backup (on cancel).
 
-    Called when user cancels preview to undo Claude's edits.
+    1. Delete any NEW files (files in pages/ not in backup)
+    2. Restore modified files to backup content
+    3. Recreate deleted files from backup
 
     Returns:
-        True if restored successfully, False if no backup
+        True if restored successfully.
     """
-    global _source_backup
+    global _pages_backup
 
-    if _source_backup is None:
+    if _pages_backup is None:
         return False
 
-    source_path = get_source_path()
-    if not source_path:
-        _source_backup = None
+    pages_dir = get_pages_dir()
+    if not pages_dir:
+        _pages_backup = None
         return False
 
     try:
-        source_path.write_text(_source_backup, encoding="utf-8")
-        FreeCAD.Console.PrintMessage("SourceManager: Restored drawing.py from backup\n")
-        _source_backup = None
+        # Delete files that were NOT in backup (Claude created them)
+        for py_file in pages_dir.glob("*.py"):
+            if py_file.name not in _pages_backup:
+                py_file.unlink()
+                FreeCAD.Console.PrintMessage(
+                    f"SourceManager: Deleted new file {py_file.name}\n"
+                )
+
+        # Restore all backed-up files
+        for filename, content in _pages_backup.items():
+            (pages_dir / filename).write_text(content, encoding="utf-8")
+
+        FreeCAD.Console.PrintMessage(
+            f"SourceManager: Restored {len(_pages_backup)} page files from backup\n"
+        )
+        _pages_backup = None
         return True
     except Exception as e:
         FreeCAD.Console.PrintWarning(f"SourceManager: Restore failed: {e}\n")
         return False
 
 
-def get_backup_content() -> Optional[str]:
-    """
-    Get the backed up drawing.py content for diff preview.
+def get_backup_combined() -> Optional[str]:
+    """Get concatenated backup content for diff preview.
 
     Returns:
-        Backup content, or None if no backup exists
+        Combined backup source (same format as read_all_pages()),
+        or None if no backup.
     """
-    return _source_backup
+    if _pages_backup is None:
+        return None
+
+    parts = []
+
+    # _shared.py first
+    if "_shared.py" in _pages_backup:
+        content = _pages_backup["_shared.py"]
+        if content.strip():
+            parts.append(f"# --- _shared.py ---\n{content}")
+
+    # Numbered pages in sorted order
+    page_files = sorted(
+        fn for fn in _pages_backup if fn != "_shared.py" and fn[0].isdigit()
+    )
+    for filename in page_files:
+        content = _pages_backup[filename]
+        if content.strip():
+            parts.append(f"\n# --- {filename} ---\n{content}")
+
+    return "\n".join(parts) if parts else ""
 
 
 def clear_backup():
-    """
-    Clear backup after successful approve.
-
-    Called when user approves preview - drawing.py is now the canonical version.
-    """
-    global _source_backup
-    _source_backup = None
+    """Clear backup after successful approve."""
+    global _pages_backup
+    _pages_backup = None
     FreeCAD.Console.PrintMessage("SourceManager: Cleared backup\n")
 
 
 def has_backup() -> bool:
     """Check if there's an active backup."""
-    return _source_backup is not None
+    return _pages_backup is not None
+
+
+def get_backup_content() -> Optional[str]:
+    """Backward compat alias for get_backup_combined()."""
+    return get_backup_combined()
+
+
+# =============================================================================
+# Legacy compat — methods that DrawingPanel may still reference
+# =============================================================================
+
+
+def read_source() -> str:
+    """Backward compat alias for read_all_pages()."""
+    return read_all_pages()
+
+
+def backup_source() -> bool:
+    """Backward compat alias for backup_pages()."""
+    return backup_pages()
+
+
+def restore_source() -> bool:
+    """Backward compat alias for restore_pages()."""
+    return restore_pages()
