@@ -129,20 +129,29 @@ def _get_claude_command() -> list:
 # System prompt template - focused on 2D structural drawings for precast concrete
 FREECAD_SYSTEM_PROMPT_TEMPLATE = """You are a FreeCAD structural drawing assistant specialized in 2D shop drawings for precast concrete.
 
-drawing.py: {source_path}
+Pages directory: {pages_dir}
 FreeCAD source: {repo_root}
+
+## Project Structure
+The drawing set is organized as per-page Python scripts in pages/:
+- `_shared.py` — Shared constants (grid dims, materials, helpers). Executed first.
+- `001_cover.py`, `002_notes.py`, ... — One script per drawing sheet.
+Each page is standalone (has its own imports) but can reference variables from _shared.py.
 
 ## When the user asks a question
 Respond with text only. Do NOT read or edit any files.
 
 ## When the user requests a drawing change
-1. Read drawing.py to understand the current drawing
-2. Edit drawing.py to make the change — write code from your training knowledge, do NOT search the FreeCAD source first
+1. Read the relevant page file(s) in pages/ to understand the current state
+2. Edit the page file OR create a new page file — write code from your training knowledge, do NOT search the FreeCAD source first
+3. Only edit ONE page per request (plus _shared.py if needed for shared constants)
+4. If creating a new page, use naming pattern: NNN_descriptive_name.py (e.g., 005_foundation_F1.py)
 
 ## Rules for code
 - All dimensions in millimeters
-- End with doc.recompute()
+- End each page with doc.recompute()
 - Use descriptive Labels for all objects
+- Object Names must be unique across ALL pages — prefix with page number (e.g., P005_WireGrid)
 - Coordinate system: X=right, Y=up (2D plan view)
 
 ## Drawing Tools
@@ -171,7 +180,7 @@ class ClaudeCodeBackend:
 
     Benefits over HTTP API:
     - Claude can read FreeCAD source code (.pyi stubs, docstrings)
-    - Claude can read project files on-demand (drawing.py, snapshots/)
+    - Claude can read project files on-demand (pages/*.py, snapshots/)
     - Project-specific CLAUDE.md for custom instructions
     - Session continuity via --resume
     - Tool access (Glob, Grep, Read) for intelligent context gathering
@@ -181,7 +190,7 @@ class ClaudeCodeBackend:
         """Initialize the Claude Code backend.
 
         Args:
-            project_dir: Project directory for accessing drawing.py and snapshots.
+            project_dir: Project directory for accessing pages/ and snapshots.
                         Note: Claude runs from repo root to access FreeCAD API docs.
         """
         self.project_dir = project_dir
@@ -200,8 +209,8 @@ class ClaudeCodeBackend:
         self.last_conversation = []
         self.last_tool_calls: List[Dict] = []  # Tool calls made during last request
 
-        # Track if drawing.py was edited (for direct source editing flow)
-        self.source_was_edited: bool = False
+        # Track which page files were edited (for direct source editing flow)
+        self.edited_files: List[str] = []
 
         # Callback for real-time tool call updates (for progress indicator)
         # Signature: on_tool_call(tool_name: str, tool_input: dict)
@@ -244,15 +253,15 @@ class ClaudeCodeBackend:
         claude_cmd = _get_claude_command()
         cmd = claude_cmd + ["-p", "--verbose", "--output-format", "stream-json"]
 
-        # Allow Edit and Write tools for direct drawing.py modification
+        # Allow Edit and Write tools for direct page file modification
         cmd.extend(["--allowedTools", "Read,Glob,Grep,Edit,Write"])
 
         # Build system prompt
-        source_path = self._get_source_path()
+        pages_dir = self._get_pages_dir()
         repo_root = self._repo_root or ""
 
         system_prompt = FREECAD_SYSTEM_PROMPT_TEMPLATE.format(
-            source_path=source_path or "(no project)",
+            pages_dir=pages_dir or "(no project)",
             repo_root=repo_root,
         )
         cmd.extend(["--append-system-prompt", system_prompt])
@@ -265,7 +274,7 @@ class ClaudeCodeBackend:
         # NOTE: Prompt is passed via stdin, not as command line argument
         # This avoids shell escaping issues with special characters
 
-        # Set working directory to PROJECT directory (so Claude can edit drawing.py)
+        # Set working directory to PROJECT directory (so Claude can edit pages/)
         # Claude can still read API docs via absolute paths in the prompt
         cwd = self.project_dir or self._repo_root or os.getcwd()
 
@@ -273,7 +282,7 @@ class ClaudeCodeBackend:
 
         # Reset state for this request
         self.last_tool_calls = []
-        self.source_was_edited = False
+        self.edited_files = []
 
         start_time = time.time()
         try:
@@ -369,17 +378,19 @@ class ClaudeCodeBackend:
             # Store tool calls for UI access
             self.last_tool_calls = tool_calls
 
-            # Track if drawing.py was edited (for direct source editing flow)
+            # Track which page files were edited (for direct source editing flow)
+            self.edited_files = []
             for tc in tool_calls:
                 tool_name = tc.get("tool")
                 if tool_name in ("Edit", "Write"):
                     file_path = tc.get("input", {}).get("file_path", "")
-                    if "drawing.py" in file_path:
-                        self.source_was_edited = True
-                        FreeCAD.Console.PrintMessage(
-                            f"DrawingAssistant: Detected drawing.py {tool_name.lower()}\n"
-                        )
-                        break
+                    if "/pages/" in file_path and file_path.endswith(".py"):
+                        filename = Path(file_path).name
+                        if filename not in self.edited_files:
+                            self.edited_files.append(filename)
+                            FreeCAD.Console.PrintMessage(
+                                f"DrawingAssistant: Detected page {tool_name.lower()}: {filename}\n"
+                            )
 
             # Check for process errors
             if process.returncode != 0:
@@ -417,8 +428,8 @@ class ClaudeCodeBackend:
         """Build the prompt for Claude Code.
 
         User message comes FIRST for prominence.
-        drawing.py path is in the system prompt — not repeated here to avoid
-        tempting Claude to read it for pure questions.
+        Pages directory path is in the system prompt — not repeated here to avoid
+        tempting Claude to read files for pure questions.
         """
         parts = []
 
@@ -547,12 +558,17 @@ class ClaudeCodeBackend:
         else:
             return f"{tool}"
 
-    def _get_source_path(self) -> Optional[str]:
-        """Get absolute path to drawing.py for the project."""
+    def _get_pages_dir(self) -> Optional[str]:
+        """Get absolute path to pages/ directory for the project."""
         if self.project_dir:
-            source_path = Path(self.project_dir) / "drawing.py"
-            return str(source_path.resolve())
+            pages_dir = Path(self.project_dir) / "pages"
+            return str(pages_dir.resolve())
         return None
+
+    @property
+    def source_was_edited(self) -> bool:
+        """Backward compat: True if any page file was edited."""
+        return len(self.edited_files) > 0
 
     def _find_repo_root(self) -> Optional[str]:
         """Find FreeCAD repo root directory.
