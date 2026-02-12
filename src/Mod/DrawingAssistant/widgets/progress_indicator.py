@@ -4,7 +4,7 @@ PhasedProgressIndicator - Shows meaningful workflow phases during AI processing.
 
 Starts with a simple "Thinking..." spinner. When tool calls arrive, transitions
 to phased steps showing progress through the design change workflow:
-1. Reading drawing.py
+1. Reading page files
 2. Understanding design
 3. Generating changes
 4. Awaiting approval
@@ -35,7 +35,7 @@ class PhaseState(Enum):
 # Phase display configuration
 PHASE_CONFIG = {
     Phase.READING: {
-        "label": "Reading drawing.py",
+        "label": "Reading page files",
         "description": "Loading current design",
     },
     Phase.UNDERSTANDING: {
@@ -346,7 +346,7 @@ class PhasedProgressIndicator(QtWidgets.QFrame):
         file_path = tool_input.get("file_path", "")
 
         # Determine phase from tool
-        if tool_name == "Read" and "drawing.py" in file_path:
+        if tool_name == "Read" and "/pages/" in file_path:
             target_phase = Phase.READING
         elif tool_name in ("Glob", "Grep", "Read"):
             target_phase = Phase.UNDERSTANDING

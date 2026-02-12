@@ -1,23 +1,25 @@
-# FreeCAD Project
+# FreeCAD Drawing Project
 
-This project has two source files. Edit only the one relevant to the current request.
+## Structure
+Drawing set is organized as per-page Python scripts:
+- `pages/_shared.py` — Shared constants (grid dims, materials). Executed first.
+- `pages/NNN_name.py` — One script per drawing sheet (e.g., 001_cover.py, 002_notes.py).
 
-## source.py — 3D Modeling (AI Assistant)
-Edit source.py for 3D geometry: Part, PartDesign, Arch, BIM solids.
-Coordinate system: X = right, Y = forward, Z = up (right-handed).
-
-## drawing.py — 2D Drawings (Drawing Assistant)
-Edit drawing.py for 2D structural drawings: Draft wires, dimensions, TechDraw pages, Spreadsheets.
-Coordinate system: X = right, Y = up (2D plan view). Z is ignored.
+## Rules
+- Edit ONE page per request (plus _shared.py if needed for shared constants)
+- Each page creates ONE TechDraw::DrawPage (drawing sheet)
+- Object Names must be globally unique — prefix with page number (e.g., P005_WireGrid)
+- New pages: use next number prefix (e.g., 005_foundation_F1.py)
+- All dimensions in millimeters
+- End each page with `doc.recompute()`
+- Use descriptive Labels for all objects
+- Coordinate system: X = right, Y = up (2D plan view)
 
 ## Conventions
-- All dimensions in millimeters
-- End scripts with `doc.recompute()`
-- Use descriptive Labels for objects
 - Rebar notation: "Ø12 A500c ბიჯი 200" (diameter, grade, spacing)
 - Grid axes: A, B, C... for columns; 1, 2, 3... for rows
 
-## Drawing Tools (drawing.py only)
+## Drawing Tools
 - **Draft**: make_wire, make_circle, make_rectangle, make_text, make_label, make_linear_dimension, make_hatch
 - **TechDraw**: DrawPage + DrawSVGTemplate for sheets, DrawViewDraft for placing Draft views
 - **Spreadsheet**: Sheet for bar bending schedules and tables

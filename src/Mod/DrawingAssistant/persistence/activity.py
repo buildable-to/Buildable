@@ -168,12 +168,12 @@ def log_setting_changed(setting: str, value: Any) -> None:
 
 
 def log_drawing_edited(tool_calls: int, file_path: str = None) -> None:
-    """Log drawing.py edit by Claude."""
+    """Log page file edit by Claude."""
     log("SOURCE_EDITED", tool_calls=tool_calls, file_path=file_path)
 
 
 def log_drawing_restored(reason: str = "cancelled") -> None:
-    """Log drawing.py restoration from backup."""
+    """Log page files restoration from backup."""
     log("SOURCE_RESTORED", reason=reason)
 
 
