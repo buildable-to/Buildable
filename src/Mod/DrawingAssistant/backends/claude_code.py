@@ -459,11 +459,17 @@ class ClaudeCodeBackend:
             parts.append(f"[Screenshot of current viewport: {screenshot_path}]")
 
         if multi_angle_screenshots:
-            parts.append("### Multi-angle screenshots:")
+            parts.append("### Current screenshots:")
             for path in multi_angle_screenshots:
                 filename = Path(path).name
-                view_name = filename.rsplit("_", 1)[-1].replace(".png", "") if "_" in filename else "view"
-                parts.append(f"- {view_name}: {path}")
+                if filename.startswith("latest_sheet_"):
+                    # TechDraw page screenshot — extract label from filename
+                    sheet_label = filename.replace("latest_sheet_", "").replace(".png", "").replace("_", " ")
+                    parts.append(f'- Sheet "{sheet_label}" (printed drawing page): {path}')
+                elif "top" in filename:
+                    parts.append(f"- Top view (Draft geometry in 3D viewport): {path}")
+                else:
+                    parts.append(f"- {filename}: {path}")
             parts.append("")
 
         return "\n".join(parts)

@@ -32,6 +32,57 @@ from .widgets.context_selection import ContextSelectionWidget
 # Maximum attempts to auto-fix code that fails preview
 MAX_FIX_ATTEMPTS = 3
 
+# TechDraw page screenshot width in pixels (height from SVG aspect ratio)
+_SHEET_PNG_WIDTH = 2000
+
+
+def _svg_to_png(svg_path: str, png_path: str, width: int = _SHEET_PNG_WIDTH) -> bool:
+    """Render an SVG file to PNG using Qt's QSvgRenderer.
+
+    Returns True on success, False on failure (e.g. QtSvg not available).
+    """
+    try:
+        from PySide6 import QtSvg
+    except ImportError:
+        FreeCAD.Console.PrintWarning(
+            "DrawingAssistant: PySide6.QtSvg not available, cannot convert SVG to PNG\n"
+        )
+        return False
+
+    try:
+        renderer = QtSvg.QSvgRenderer(svg_path)
+        if not renderer.isValid():
+            FreeCAD.Console.PrintWarning(
+                f"DrawingAssistant: Invalid SVG: {svg_path}\n"
+            )
+            return False
+
+        # Calculate height from SVG aspect ratio
+        svg_size = renderer.defaultSize()
+        if svg_size.width() <= 0:
+            return False
+        height = int(width * svg_size.height() / svg_size.width())
+
+        image = QtGui.QImage(QtCore.QSize(width, height), QtGui.QImage.Format_ARGB32)
+        image.fill(QtCore.Qt.white)
+        painter = QtGui.QPainter(image)
+        renderer.render(painter)
+        painter.end()
+
+        return image.save(png_path, "PNG")
+    except Exception as e:
+        FreeCAD.Console.PrintWarning(
+            f"DrawingAssistant: SVG to PNG conversion failed: {e}\n"
+        )
+        return False
+
+
+def _find_techdraw_pages(doc) -> list:
+    """Return all TechDraw::DrawPage objects in the document."""
+    if not doc:
+        return []
+    return [obj for obj in doc.Objects if obj.TypeId == "TechDraw::DrawPage"]
+
 
 class LLMWorker(QtCore.QThread):
     """Background worker for LLM API calls."""
@@ -1625,10 +1676,76 @@ If there are PROBLEMS, explain briefly what's wrong and edit the relevant page f
         else:
             self._chat.add_change_message(change_set)
 
-    def _capture_multi_angle_screenshots(self) -> list:
-        """Capture screenshots from multiple angles.
+    def _capture_techdraw_screenshots(self, doc=None, screenshots_dir=None) -> list:
+        """Export each TechDraw DrawPage as a PNG screenshot.
 
-        For 2D drawings, captures top view (primary) and isometric view.
+        Uses TechDrawGui.exportPageAsSvg() then converts SVG→PNG via Qt.
+        Returns list of PNG file paths.
+        """
+        results = []
+        if doc is None:
+            doc = FreeCAD.ActiveDocument
+        if not doc:
+            return results
+
+        pages = _find_techdraw_pages(doc)
+        if not pages:
+            return results
+
+        try:
+            import TechDrawGui
+        except ImportError:
+            FreeCAD.Console.PrintWarning(
+                "DrawingAssistant: TechDrawGui not available, skipping page screenshots\n"
+            )
+            return results
+
+        if screenshots_dir is None:
+            if not self._project_dir:
+                return results
+            screenshots_dir = Path(self._project_dir) / "screenshots"
+        screenshots_dir = Path(screenshots_dir)
+        screenshots_dir.mkdir(parents=True, exist_ok=True)
+
+        import re
+
+        for page in pages:
+            try:
+                # Sanitize label for filename
+                safe_label = re.sub(r"[^\w\-]", "_", page.Label).strip("_")
+                if not safe_label:
+                    safe_label = page.Name
+
+                svg_path = str(screenshots_dir / f"_tmp_sheet_{safe_label}.svg")
+                png_path = str(screenshots_dir / f"latest_sheet_{safe_label}.png")
+
+                TechDrawGui.exportPageAsSvg(page, svg_path)
+
+                if _svg_to_png(svg_path, png_path):
+                    results.append(png_path)
+                    FreeCAD.Console.PrintMessage(
+                        f"DrawingAssistant: Captured sheet {page.Label} -> "
+                        f"latest_sheet_{safe_label}.png\n"
+                    )
+
+                # Clean up temporary SVG
+                try:
+                    import os
+                    os.remove(svg_path)
+                except OSError:
+                    pass
+
+            except Exception as e:
+                FreeCAD.Console.PrintWarning(
+                    f"DrawingAssistant: Failed to capture sheet {page.Label}: {e}\n"
+                )
+
+        return results
+
+    def _capture_multi_angle_screenshots(self) -> list:
+        """Capture screenshots of the current drawing state.
+
+        Captures top view (Draft geometry) + one PNG per TechDraw DrawPage.
         """
         results = []
 
@@ -1640,18 +1757,21 @@ If there are PROBLEMS, explain briefly what's wrong and edit the relevant page f
             if not hasattr(view, "saveImage"):
                 return []
 
-            # For 2D drawings: top view is primary, isometric for overview
-            views = [
-                ("viewTop", "top"),
-                ("viewIsometric", "isometric"),
-            ]
-
             if not self._project_dir:
                 return []
 
             screenshots_dir = Path(self._project_dir) / "screenshots"
             screenshots_dir.mkdir(parents=True, exist_ok=True)
 
+            # Clean up stale isometric screenshot from older sessions
+            stale_iso = screenshots_dir / "latest_isometric.png"
+            if stale_iso.exists():
+                try:
+                    stale_iso.unlink()
+                except OSError:
+                    pass
+
+            # --- Top view (Draft geometry in 3D viewport) ---
             saved_camera = None
             if hasattr(view, "getCamera"):
                 saved_camera = view.getCamera()
@@ -1660,28 +1780,31 @@ If there are PROBLEMS, explain briefly what's wrong and edit the relevant page f
                 view.setAnimationEnabled(False)
 
             try:
-                for method_name, display_name in views:
-                    try:
-                        getattr(view, method_name)()
-                        view.fitAll()
-                        FreeCADGui.updateGui()
+                view.viewTop()
+                view.fitAll()
+                FreeCADGui.updateGui()
 
-                        filepath = screenshots_dir / f"latest_{display_name}.png"
-                        view.saveImage(str(filepath), 800, 600)
-                        results.append(str(filepath))
-                        FreeCAD.Console.PrintMessage(
-                            f"DrawingAssistant: Saved {filepath.name}\n"
-                        )
-                    except Exception as e:
-                        FreeCAD.Console.PrintWarning(
-                            f"DrawingAssistant: Failed to capture {display_name} view: {e}\n"
-                        )
+                filepath = screenshots_dir / "latest_top.png"
+                view.saveImage(str(filepath), 800, 600)
+                results.append(str(filepath))
+                FreeCAD.Console.PrintMessage(
+                    f"DrawingAssistant: Saved {filepath.name}\n"
+                )
+            except Exception as e:
+                FreeCAD.Console.PrintWarning(
+                    f"DrawingAssistant: Failed to capture top view: {e}\n"
+                )
             finally:
                 if saved_camera and hasattr(view, "setCamera"):
                     view.setCamera(saved_camera)
                     FreeCADGui.updateGui()
                 if hasattr(view, "setAnimationEnabled"):
                     view.setAnimationEnabled(True)
+
+            # --- TechDraw page screenshots ---
+            results.extend(self._capture_techdraw_screenshots(
+                doc=FreeCAD.ActiveDocument, screenshots_dir=screenshots_dir
+            ))
 
             self._last_multi_angle_screenshots = results
             return results
@@ -1697,7 +1820,7 @@ If there are PROBLEMS, explain briefly what's wrong and edit the relevant page f
     # =========================================================================
 
     def _capture_sandbox_screenshots(self, sandbox_doc_name: str) -> list:
-        """Capture screenshots from sandbox document (top + isometric for 2D)."""
+        """Capture screenshots from sandbox document (top view + TechDraw pages)."""
         results = []
 
         original_doc = FreeCAD.ActiveDocument
@@ -1723,17 +1846,13 @@ If there are PROBLEMS, explain briefly what's wrong and edit the relevant page f
             if not hasattr(view, "saveImage"):
                 return []
 
-            views = [
-                ("viewTop", "top"),
-                ("viewIsometric", "isometric"),
-            ]
-
             if not self._project_dir:
                 return []
 
             screenshots_dir = Path(self._project_dir) / "screenshots"
             screenshots_dir.mkdir(parents=True, exist_ok=True)
 
+            # --- Top view ---
             saved_camera = None
             if hasattr(view, "getCamera"):
                 saved_camera = view.getCamera()
@@ -1742,24 +1861,27 @@ If there are PROBLEMS, explain briefly what's wrong and edit the relevant page f
                 view.setAnimationEnabled(False)
 
             try:
-                for method_name, view_name in views:
-                    try:
-                        getattr(view, method_name)()
-                        view.fitAll()
-                        FreeCADGui.updateGui()
+                view.viewTop()
+                view.fitAll()
+                FreeCADGui.updateGui()
 
-                        filepath = screenshots_dir / f"latest_{view_name}.png"
-                        view.saveImage(str(filepath), 800, 600)
-                        results.append(str(filepath))
-                    except Exception as e:
-                        FreeCAD.Console.PrintWarning(
-                            f"DrawingAssistant: Failed capture {view_name}: {e}\n"
-                        )
+                filepath = screenshots_dir / "latest_top.png"
+                view.saveImage(str(filepath), 800, 600)
+                results.append(str(filepath))
+            except Exception as e:
+                FreeCAD.Console.PrintWarning(
+                    f"DrawingAssistant: Failed capture top: {e}\n"
+                )
             finally:
                 if saved_camera and hasattr(view, "setCamera"):
                     view.setCamera(saved_camera)
                 if hasattr(view, "setAnimationEnabled"):
                     view.setAnimationEnabled(True)
+
+            # --- TechDraw page screenshots ---
+            results.extend(self._capture_techdraw_screenshots(
+                doc=sandbox_doc, screenshots_dir=screenshots_dir
+            ))
 
             return results
 
