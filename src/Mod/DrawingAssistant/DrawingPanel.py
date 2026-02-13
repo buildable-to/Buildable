@@ -4,6 +4,7 @@ Drawing Assistant Panel - Main dock widget for 2D structural drawing with AI.
 Features a modern Cursor-like chat interface for Draft + TechDraw + Spreadsheet.
 """
 
+import re
 import subprocess
 from datetime import datetime
 
@@ -32,59 +33,51 @@ from .widgets.context_selection import ContextSelectionWidget
 # Maximum attempts to auto-fix code that fails preview
 MAX_FIX_ATTEMPTS = 3
 
-def _find_page_scene(page):
-    """Find the QGraphicsScene for a TechDraw page's MDI tab."""
-    mw = FreeCADGui.getMainWindow()
-    mdi = mw.centralWidget()
+def _svg_to_png(svg_path: str, png_path: str, width: int = 2000) -> bool:
+    """Render an SVG to PNG, stripping FreeCAD's custom namespaces first.
 
-    for sub in mdi.subWindowList():
-        title = sub.windowTitle()
-        if page.Label not in title and page.Name not in title:
-            continue
-        widget = sub.widget()
-        if widget is None:
-            continue
-        gv = widget.findChild(QtWidgets.QGraphicsView)
-        if gv is None:
-            continue
-        scene = gv.scene()
-        if scene and scene.sceneRect().width() > 0:
-            return scene
-    return None
+    TechDrawGui.exportPageAsSvg() includes the template (border, title
+    block) in the SVG, but Qt's QSvgRenderer chokes on custom namespace
+    attributes (freecad:editable, inkscape:label, etc.).  Stripping them
+    is safe — they are metadata, not rendering instructions.
 
-
-def _render_page_from_mdi(page, png_path: str, width: int = 2000) -> bool:
-    """Render a TechDraw page by finding its MDI QGraphicsScene.
-
-    This captures exactly what the user sees — template frame, title block
-    text, and all views — by rendering the same QGraphicsScene that Qt
-    paints on screen.  SVG/PDF exports strip the template during rendering,
-    so the MDI scene is the only reliable source.
-
-    If no MDI tab exists yet (page created via script), opens it first.
+    No MDI tab is opened.  Everything is file I/O + in-memory rendering.
     """
     try:
-        FreeCADGui.updateGui()
-        scene = _find_page_scene(page)
+        from PySide6 import QtSvg
+    except ImportError:
+        FreeCAD.Console.PrintWarning(
+            "DrawingAssistant: PySide6.QtSvg not available, skipping sheet PNG\n"
+        )
+        return False
 
-        if scene is None:
-            # Page was created by script — MDI tab doesn't exist yet.
-            # Force-open it via ViewProvider.doubleClicked().
-            try:
-                page.ViewObject.doubleClicked()
-                FreeCADGui.updateGui()
-                scene = _find_page_scene(page)
-            except Exception:
-                pass
+    try:
+        with open(svg_path, "r", encoding="utf-8") as f:
+            svg_text = f.read()
 
-        if scene is None:
+        # Strip namespace declarations and prefixed attributes that
+        # QSvgRenderer cannot handle.
+        svg_text = re.sub(
+            r'\s+xmlns:(?:freecad|inkscape|sodipodi|dc|cc|rdf)="[^"]*"',
+            "", svg_text,
+        )
+        svg_text = re.sub(
+            r'\s+(?:freecad|inkscape|sodipodi|dc|cc|rdf):\w+(?::\w+)*="[^"]*"',
+            "", svg_text,
+        )
+
+        renderer = QtSvg.QSvgRenderer(svg_text.encode("utf-8"))
+        if not renderer.isValid():
             FreeCAD.Console.PrintWarning(
-                f"DrawingAssistant: No MDI scene for page '{page.Label}'\n"
+                f"DrawingAssistant: QSvgRenderer invalid for {svg_path}\n"
             )
             return False
 
-        rect = scene.sceneRect()
-        height = int(width * rect.height() / rect.width())
+        svg_size = renderer.defaultSize()
+        if svg_size.width() <= 0:
+            return False
+        height = int(width * svg_size.height() / svg_size.width())
+
         image = QtGui.QImage(
             QtCore.QSize(width, height), QtGui.QImage.Format_ARGB32
         )
@@ -92,15 +85,38 @@ def _render_page_from_mdi(page, png_path: str, width: int = 2000) -> bool:
         painter = QtGui.QPainter(image)
         painter.setRenderHint(QtGui.QPainter.Antialiasing)
         painter.setRenderHint(QtGui.QPainter.TextAntialiasing)
-        scene.render(painter)
+        renderer.render(painter)
         painter.end()
 
         return image.save(png_path, "PNG")
     except Exception as e:
         FreeCAD.Console.PrintWarning(
-            f"DrawingAssistant: MDI page render failed: {e}\n"
+            f"DrawingAssistant: SVG→PNG failed: {e}\n"
         )
         return False
+
+
+def _freeze_mdi_subwindows():
+    """Disable painting on every MDI sub-window before object deletion.
+
+    TechDraw's QGVPage::drawBackground() accesses the DrawPage C++ object.
+    doc.removeObject() can trigger paint events synchronously (C++ signals
+    → PySide → processEvents → expose event → paint on freed memory).
+
+    setUpdatesEnabled(False) must be set on each sub-window directly —
+    QMdiSubWindow has the Qt::Window flag so the setting does NOT cascade
+    from the parent QMdiArea.
+
+    Returns the list of frozen sub-windows (to re-enable in finally block).
+    """
+    try:
+        mdi = FreeCADGui.getMainWindow().centralWidget()
+        subs = list(mdi.subWindowList())
+        for sub in subs:
+            sub.setUpdatesEnabled(False)
+        return subs
+    except Exception:
+        return []
 
 
 def _find_techdraw_pages(doc) -> list:
@@ -1211,24 +1227,36 @@ Read the relevant page file to understand what went wrong, then fix it."""
             # IMPORTANT: Reverse order to avoid SIGSEGV from dangling links
             doc = FreeCAD.ActiveDocument
             if doc:
-                objects_to_remove = [
-                    obj.Name for obj in reversed(doc.Objects)
-                    if obj.TypeId not in ("App::Origin", "App::Plane", "App::Line")
-                ]
-                FreeCAD.Console.PrintMessage(
-                    f"DrawingAssistant: Clearing {len(objects_to_remove)} objects before re-execution\n"
-                )
-                for obj_name in objects_to_remove:
-                    try:
-                        doc.removeObject(obj_name)
-                    except Exception:
-                        pass
+                # Freeze MDI painting BEFORE any object deletion.
+                # TechDraw's QGVPage can receive paint events during
+                # removeObject() and crash accessing the freed DrawPage.
+                # Freeze every MDI sub-window to prevent paint events
+                # during object deletion.  QMdiSubWindow has Qt::Window
+                # flag so setUpdatesEnabled does NOT cascade from the
+                # parent QMdiArea — must be set per sub-window.
+                frozen_subs = _freeze_mdi_subwindows()
+                try:
+                    objects_to_remove = [
+                        obj.Name for obj in reversed(doc.Objects)
+                        if obj.TypeId not in ("App::Origin", "App::Plane", "App::Line")
+                    ]
+                    FreeCAD.Console.PrintMessage(
+                        f"DrawingAssistant: Clearing {len(objects_to_remove)} objects before re-execution\n"
+                    )
+                    for obj_name in objects_to_remove:
+                        try:
+                            doc.removeObject(obj_name)
+                        except Exception:
+                            pass
+                    doc.recompute()
+                finally:
+                    for sub in frozen_subs:
+                        try:
+                            sub.setUpdatesEnabled(True)
+                        except Exception:
+                            pass
 
-                # Flush document state after clearing — TechDraw keeps internal
-                # references that cause 'NoneType' errors if not cleaned up
-                doc.recompute()
-
-                # Let Qt process TechDraw MDI tab closure so the 3D view is
+                # Let Qt process MDI tab cleanup so the 3D view is
                 # active again before the executor's View3DGuard installs.
                 try:
                     QtWidgets.QApplication.processEvents()
@@ -1703,10 +1731,11 @@ If there are PROBLEMS, explain briefly what's wrong and edit the relevant page f
             self._chat.add_change_message(change_set)
 
     def _capture_techdraw_screenshots(self, doc=None, screenshots_dir=None) -> list:
-        """Capture each TechDraw DrawPage as a PNG screenshot.
+        """Export each TechDraw DrawPage as SVG then render to PNG.
 
-        Renders from the MDI QGraphicsScene — the only approach that includes
-        the template frame and title block (SVG/PDF exports strip them).
+        Uses TechDrawGui.exportPageAsSvg() which includes the template
+        (border, title block).  Custom namespaces are stripped so
+        QSvgRenderer can handle the SVG.  No MDI tabs are opened.
         Returns list of PNG file paths.
         """
         results = []
@@ -1719,6 +1748,14 @@ If there are PROBLEMS, explain briefly what's wrong and edit the relevant page f
         if not pages:
             return results
 
+        try:
+            import TechDrawGui
+        except ImportError:
+            FreeCAD.Console.PrintWarning(
+                "DrawingAssistant: TechDrawGui not available, skipping page screenshots\n"
+            )
+            return results
+
         if screenshots_dir is None:
             if not self._project_dir:
                 return results
@@ -1726,22 +1763,28 @@ If there are PROBLEMS, explain briefly what's wrong and edit the relevant page f
         screenshots_dir = Path(screenshots_dir)
         screenshots_dir.mkdir(parents=True, exist_ok=True)
 
-        import re
-
         for page in pages:
             try:
                 safe_label = re.sub(r"[^\w\-]", "_", page.Label).strip("_")
                 if not safe_label:
                     safe_label = page.Name
 
+                svg_path = str(screenshots_dir / f"_tmp_sheet_{safe_label}.svg")
                 png_path = str(screenshots_dir / f"latest_sheet_{safe_label}.png")
 
-                if _render_page_from_mdi(page, png_path):
+                TechDrawGui.exportPageAsSvg(page, svg_path)
+
+                if _svg_to_png(svg_path, png_path):
                     results.append(png_path)
                     FreeCAD.Console.PrintMessage(
                         f"DrawingAssistant: Captured sheet {page.Label} -> "
                         f"latest_sheet_{safe_label}.png\n"
                     )
+
+                # Keep SVG for debugging (TODO: remove after investigation)
+                FreeCAD.Console.PrintMessage(
+                    f"DrawingAssistant: SVG kept at {svg_path}\n"
+                )
 
             except Exception as e:
                 FreeCAD.Console.PrintWarning(
