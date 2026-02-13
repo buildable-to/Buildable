@@ -107,7 +107,7 @@ class PreviewWidget(QtWidgets.QFrame):
 
         # Description (rendered as markdown)
         if description:
-            desc_html = markdown.markdown(description)
+            desc_html = markdown.markdown(description, extensions=["tables"])
             desc_label = QtWidgets.QLabel(desc_html)
             desc_label.setTextFormat(QtCore.Qt.RichText)
             desc_label.setWordWrap(True)

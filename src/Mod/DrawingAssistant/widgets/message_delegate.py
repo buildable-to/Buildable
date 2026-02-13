@@ -11,6 +11,20 @@ from .. import Theme
 import re
 import markdown
 
+_MD_EXTENSIONS = ["tables"]
+
+
+def _md_to_html(text: str) -> str:
+    """Convert markdown to HTML with table styling for Qt rich text."""
+    html = markdown.markdown(text.strip(), extensions=_MD_EXTENSIONS)
+    if "<table>" in html:
+        html = html.replace(
+            "<table>",
+            '<table border="1" cellpadding="4" cellspacing="0"'
+            ' style="border-collapse: collapse;">',
+        )
+    return html
+
 
 class DebugInfoWidget(QtWidgets.QWidget):
     """Collapsible debug info panel for LLM requests."""
@@ -399,7 +413,7 @@ class MessageCard(QtWidgets.QFrame):
 
         for part_type, content in parts:
             if part_type == "text" and content.strip():
-                html = markdown.markdown(content.strip())
+                html = _md_to_html(content)
                 label = QtWidgets.QLabel(html)
                 label.setTextFormat(QtCore.Qt.RichText)
                 label.setWordWrap(True)
@@ -429,7 +443,7 @@ class MessageCard(QtWidgets.QFrame):
         # For streaming messages with empty text, we skip this (text will come later)
         if self._content_layout.count() == 0 and not self._message.is_streaming:
             display_text = text.strip() if text.strip() else "(No response)"
-            html = markdown.markdown(display_text)
+            html = _md_to_html(display_text)
             label = QtWidgets.QLabel(html)
             label.setTextFormat(QtCore.Qt.RichText)
             label.setWordWrap(True)
