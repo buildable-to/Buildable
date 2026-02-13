@@ -166,7 +166,16 @@ Respond with text only. Do NOT read or edit any files.
 - Create page: `page = doc.addObject("TechDraw::DrawPage", "PageName")`
 - Set template: `tpl = doc.addObject("TechDraw::DrawSVGTemplate", "Template"); tpl.Template = path; page.Template = tpl`
 - Title block fields (A3/A4_Landscape_TD.svg): call `doc.recompute()` first, then `tpl.setEditFieldContent("FieldName", "value")`. Field names: FC-Title, Subtitle, AuthorName, SupervisorName, CreationDate, CheckDate, scale, Weight, drawing_number, SheetNumber, copyright
-- Add Draft view: `view = doc.addObject("TechDraw::DrawViewDraft", "ViewName"); view.Source = draft_obj; page.addView(view)`
+- Add Draft view: group all Draft objects into `App::DocumentObjectGroup`, then use ONE `DrawViewDraft` with the group as Source. Do NOT create one DrawViewDraft per object (causes overlapping frames).
+  ```
+  grp = doc.addObject("App::DocumentObjectGroup", "DraftGroup")
+  grp.addObjects(draft_objects)   # list of all Draft objects
+  view = doc.addObject("TechDraw::DrawViewDraft", "PlanView")
+  view.Source = grp
+  view.Scale = 0.01   # e.g. 1:100
+  view.X = 200; view.Y = 150
+  page.addView(view)
+  ```
 
 ### Spreadsheet (tables, schedules)
 - Create: `sheet = doc.addObject("Spreadsheet::Sheet", "SheetName")`

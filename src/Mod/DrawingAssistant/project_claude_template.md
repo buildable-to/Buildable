@@ -19,6 +19,7 @@ Template path: `FreeCAD.getResourceDir() + "Mod/TechDraw/Templates/ISO/<template
 Common templates: A3_Landscape_TD.svg, A4_Landscape_TD.svg, A3_Landscape_blank.svg
 Title block fields (A3/A4_Landscape_TD.svg): `doc.recompute()` first, then `tpl.setEditFieldContent("FieldName", "value")`.
 Field names: FC-Title, Subtitle, AuthorName, SupervisorName, CreationDate, CheckDate, scale, Weight, drawing_number, SheetNumber, copyright
+Adding Draft views: group ALL Draft objects into `App::DocumentObjectGroup`, then create ONE `DrawViewDraft` with the group as Source. Do NOT create one DrawViewDraft per object (causes overlapping bounding-box frames on the sheet).
 
 ## Important API Notes
 - `Draft.make_circle(radius, placement)` — 2nd arg MUST be `FreeCAD.Placement`, NOT a `Vector`
