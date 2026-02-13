@@ -726,11 +726,10 @@ Do NOT write any code. Only output the numbered plan steps."""
             f"preview: {response[:100] if response else '(empty)'}...\n"
         )
 
-        # With Claude Code backend, if no files were edited, this is a pure
-        # text response. Show it directly — don't try to parse code from text.
-        # (The old code-in-text heuristic matches words like "TechDraw" in
-        # plain English, causing false positives.)
-        if not tool_calls:
+        # With Claude Code backend, if no files were edited, this is always
+        # a pure text response — even if Claude used Read/Glob tool calls to
+        # gather context before answering. Show it directly.
+        if isinstance(self.llm, ClaudeCodeBackend.ClaudeCodeBackend):
             self._show_traditional_response(response)
             self.pending_input = None
             return
