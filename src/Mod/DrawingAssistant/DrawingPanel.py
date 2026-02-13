@@ -570,6 +570,10 @@ class DrawingAssistantDockWidget(QtWidgets.QDockWidget):
 
         self.pending_input = user_input
 
+        # Log user prompt to console for debugging
+        preview = user_input.replace('\n', ' ')
+        FreeCAD.Console.PrintMessage(f"DrawingAssistant: User: {preview}\n")
+
         # Log message sent
         ActivityLogger.log_message_sent(
             user_input, session_id=self.session_manager.get_current_session_id()
@@ -722,7 +726,16 @@ Do NOT write any code. Only output the numbered plan steps."""
             f"preview: {response[:100] if response else '(empty)'}...\n"
         )
 
-        # Parse description and code from response
+        # With Claude Code backend, if no files were edited, this is a pure
+        # text response. Show it directly — don't try to parse code from text.
+        # (The old code-in-text heuristic matches words like "TechDraw" in
+        # plain English, causing false positives.)
+        if not tool_calls:
+            self._show_traditional_response(response)
+            self.pending_input = None
+            return
+
+        # Parse description and code from response (legacy HTTP backend path)
         description, code = self._parse_response(response)
 
         # If auto-run is enabled, skip preview and execute directly
