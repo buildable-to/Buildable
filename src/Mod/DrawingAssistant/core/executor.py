@@ -94,41 +94,70 @@ def _find_3d_view():
     return None
 
 
+class _TopDownView:
+    """Minimal stand-in for a 3D view when no real one is available.
+
+    Draft's make_linear_dimension() calls get3DView().getViewDirection()
+    to determine the dimension normal. For 2D drafting (XY plane), a
+    top-down direction (0, 0, -1) is the correct default.
+    """
+
+    def getViewDirection(self):
+        return FreeCAD.Vector(0, 0, -1)
+
+    def getSceneGraph(self):
+        return None
+
+
+# Singleton — reused across guard installs
+_fallback_view = _TopDownView()
+
+
 class _View3DGuard:
     """Monkeypatch Draft's get_3d_view to survive TechDraw tab activation.
 
     When a TechDraw::DrawPage is created and doc.recompute() runs, FreeCAD
     activates the TechDraw MDI tab. Draft functions like make_linear_dimension()
     call gui_utils.get3DView().getViewDirection(), which returns None when the
-    active window is a TechDraw page (no getSceneGraph). This guard stores
-    the 3D view before execution and falls back to it if get_3d_view returns None.
+    active window is a TechDraw page (no getSceneGraph). This guard patches
+    get_3d_view to fall back to a cached view, live-scanned view, or a
+    top-down dummy — it never returns None.
     """
 
     def __init__(self):
         self._original_fn = None
-        self._stored_view = None
+        self._cached_view = None
         self._gui_utils = None
 
     def install(self):
-        """Store current 3D view and patch gui_utils."""
+        """Patch gui_utils with a resilient get_3d_view."""
         try:
             from draftutils import gui_utils
             self._gui_utils = gui_utils
             self._original_fn = gui_utils.get_3d_view
 
-            # Find the 3D view even if a TechDraw tab is currently active.
-            # gui_utils.get_3d_view() only returns the active window, which
-            # may be a TechDraw page. _find_3d_view() scans all MDI windows.
-            self._stored_view = gui_utils.get_3d_view() or _find_3d_view()
+            # Try to capture the 3D view now. If the MDI is in a bad state
+            # (e.g. TechDraw tab lingering after object clearing), this may
+            # return None — that's OK, the patch will find it lazily later.
+            self._cached_view = gui_utils.get_3d_view() or _find_3d_view()
 
-            if self._stored_view is None:
-                return  # No 3D view available — nothing to guard
+            guard = self
 
             def _safe_get_3d_view():
-                view = self._original_fn()
-                if view is None:
-                    return self._stored_view
-                return view
+                # Fast path: original function finds active 3D view
+                view = guard._original_fn()
+                if view is not None:
+                    return view
+                # Cached from install or a previous miss
+                if guard._cached_view is not None:
+                    return guard._cached_view
+                # Live scan: MDI may have settled since install time
+                found = _find_3d_view()
+                if found is not None:
+                    guard._cached_view = found
+                    return found
+                # Last resort: top-down dummy so Draft never crashes
+                return _fallback_view
 
             gui_utils.get_3d_view = _safe_get_3d_view
             gui_utils.get3DView = _safe_get_3d_view

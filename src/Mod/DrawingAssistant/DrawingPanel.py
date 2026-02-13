@@ -1151,6 +1151,13 @@ Read the relevant page file to understand what went wrong, then fix it."""
                 # references that cause 'NoneType' errors if not cleaned up
                 doc.recompute()
 
+                # Let Qt process TechDraw MDI tab closure so the 3D view is
+                # active again before the executor's View3DGuard installs.
+                try:
+                    QtWidgets.QApplication.processEvents()
+                except Exception:
+                    pass
+
             # Execute the new pages
             success, message, warnings = CodeExecutor.execute(source_content)
             if warnings:

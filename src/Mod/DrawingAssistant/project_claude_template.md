@@ -17,6 +17,8 @@ Execution order: underscore-prefixed files first, then alphabetical.
 ## TechDraw Setup
 Template path: `FreeCAD.getResourceDir() + "Mod/TechDraw/Templates/ISO/<template>.svg"`
 Common templates: A3_Landscape_TD.svg, A4_Landscape_TD.svg, A3_Landscape_blank.svg
+Title block fields (A3/A4_Landscape_TD.svg): `doc.recompute()` first, then `tpl.setEditFieldContent("FieldName", "value")`.
+Field names: FC-Title, Subtitle, AuthorName, SupervisorName, CreationDate, CheckDate, scale, Weight, drawing_number, SheetNumber, copyright
 
 ## Important API Notes
 - `Draft.make_circle(radius, placement)` — 2nd arg MUST be `FreeCAD.Placement`, NOT a `Vector`

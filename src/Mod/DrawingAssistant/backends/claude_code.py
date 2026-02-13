@@ -165,6 +165,7 @@ Respond with text only. Do NOT read or edit any files.
 - Common: A3_Landscape_TD.svg, A4_Landscape_TD.svg, A3_Landscape_blank.svg, A1_Landscape_ISO5457_advanced.svg
 - Create page: `page = doc.addObject("TechDraw::DrawPage", "PageName")`
 - Set template: `tpl = doc.addObject("TechDraw::DrawSVGTemplate", "Template"); tpl.Template = path; page.Template = tpl`
+- Title block fields (A3/A4_Landscape_TD.svg): call `doc.recompute()` first, then `tpl.setEditFieldContent("FieldName", "value")`. Field names: FC-Title, Subtitle, AuthorName, SupervisorName, CreationDate, CheckDate, scale, Weight, drawing_number, SheetNumber, copyright
 - Add Draft view: `view = doc.addObject("TechDraw::DrawViewDraft", "ViewName"); view.Source = draft_obj; page.addView(view)`
 
 ### Spreadsheet (tables, schedules)
