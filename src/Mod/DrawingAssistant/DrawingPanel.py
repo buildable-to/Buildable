@@ -32,47 +32,73 @@ from .widgets.context_selection import ContextSelectionWidget
 # Maximum attempts to auto-fix code that fails preview
 MAX_FIX_ATTEMPTS = 3
 
-# TechDraw page screenshot width in pixels (height from SVG aspect ratio)
-_SHEET_PNG_WIDTH = 2000
+def _find_page_scene(page):
+    """Find the QGraphicsScene for a TechDraw page's MDI tab."""
+    mw = FreeCADGui.getMainWindow()
+    mdi = mw.centralWidget()
+
+    for sub in mdi.subWindowList():
+        title = sub.windowTitle()
+        if page.Label not in title and page.Name not in title:
+            continue
+        widget = sub.widget()
+        if widget is None:
+            continue
+        gv = widget.findChild(QtWidgets.QGraphicsView)
+        if gv is None:
+            continue
+        scene = gv.scene()
+        if scene and scene.sceneRect().width() > 0:
+            return scene
+    return None
 
 
-def _svg_to_png(svg_path: str, png_path: str, width: int = _SHEET_PNG_WIDTH) -> bool:
-    """Render an SVG file to PNG using Qt's QSvgRenderer.
+def _render_page_from_mdi(page, png_path: str, width: int = 2000) -> bool:
+    """Render a TechDraw page by finding its MDI QGraphicsScene.
 
-    Returns True on success, False on failure (e.g. QtSvg not available).
+    This captures exactly what the user sees — template frame, title block
+    text, and all views — by rendering the same QGraphicsScene that Qt
+    paints on screen.  SVG/PDF exports strip the template during rendering,
+    so the MDI scene is the only reliable source.
+
+    If no MDI tab exists yet (page created via script), opens it first.
     """
     try:
-        from PySide6 import QtSvg
-    except ImportError:
-        FreeCAD.Console.PrintWarning(
-            "DrawingAssistant: PySide6.QtSvg not available, cannot convert SVG to PNG\n"
-        )
-        return False
+        FreeCADGui.updateGui()
+        scene = _find_page_scene(page)
 
-    try:
-        renderer = QtSvg.QSvgRenderer(svg_path)
-        if not renderer.isValid():
+        if scene is None:
+            # Page was created by script — MDI tab doesn't exist yet.
+            # Force-open it via ViewProvider.doubleClicked().
+            try:
+                page.ViewObject.doubleClicked()
+                FreeCADGui.updateGui()
+                scene = _find_page_scene(page)
+            except Exception:
+                pass
+
+        if scene is None:
             FreeCAD.Console.PrintWarning(
-                f"DrawingAssistant: Invalid SVG: {svg_path}\n"
+                f"DrawingAssistant: No MDI scene for page '{page.Label}'\n"
             )
             return False
 
-        # Calculate height from SVG aspect ratio
-        svg_size = renderer.defaultSize()
-        if svg_size.width() <= 0:
-            return False
-        height = int(width * svg_size.height() / svg_size.width())
-
-        image = QtGui.QImage(QtCore.QSize(width, height), QtGui.QImage.Format_ARGB32)
+        rect = scene.sceneRect()
+        height = int(width * rect.height() / rect.width())
+        image = QtGui.QImage(
+            QtCore.QSize(width, height), QtGui.QImage.Format_ARGB32
+        )
         image.fill(QtCore.Qt.white)
         painter = QtGui.QPainter(image)
-        renderer.render(painter)
+        painter.setRenderHint(QtGui.QPainter.Antialiasing)
+        painter.setRenderHint(QtGui.QPainter.TextAntialiasing)
+        scene.render(painter)
         painter.end()
 
         return image.save(png_path, "PNG")
     except Exception as e:
         FreeCAD.Console.PrintWarning(
-            f"DrawingAssistant: SVG to PNG conversion failed: {e}\n"
+            f"DrawingAssistant: MDI page render failed: {e}\n"
         )
         return False
 
@@ -1677,9 +1703,10 @@ If there are PROBLEMS, explain briefly what's wrong and edit the relevant page f
             self._chat.add_change_message(change_set)
 
     def _capture_techdraw_screenshots(self, doc=None, screenshots_dir=None) -> list:
-        """Export each TechDraw DrawPage as a PNG screenshot.
+        """Capture each TechDraw DrawPage as a PNG screenshot.
 
-        Uses TechDrawGui.exportPageAsSvg() then converts SVG→PNG via Qt.
+        Renders from the MDI QGraphicsScene — the only approach that includes
+        the template frame and title block (SVG/PDF exports strip them).
         Returns list of PNG file paths.
         """
         results = []
@@ -1690,14 +1717,6 @@ If there are PROBLEMS, explain briefly what's wrong and edit the relevant page f
 
         pages = _find_techdraw_pages(doc)
         if not pages:
-            return results
-
-        try:
-            import TechDrawGui
-        except ImportError:
-            FreeCAD.Console.PrintWarning(
-                "DrawingAssistant: TechDrawGui not available, skipping page screenshots\n"
-            )
             return results
 
         if screenshots_dir is None:
@@ -1711,29 +1730,18 @@ If there are PROBLEMS, explain briefly what's wrong and edit the relevant page f
 
         for page in pages:
             try:
-                # Sanitize label for filename
                 safe_label = re.sub(r"[^\w\-]", "_", page.Label).strip("_")
                 if not safe_label:
                     safe_label = page.Name
 
-                svg_path = str(screenshots_dir / f"_tmp_sheet_{safe_label}.svg")
                 png_path = str(screenshots_dir / f"latest_sheet_{safe_label}.png")
 
-                TechDrawGui.exportPageAsSvg(page, svg_path)
-
-                if _svg_to_png(svg_path, png_path):
+                if _render_page_from_mdi(page, png_path):
                     results.append(png_path)
                     FreeCAD.Console.PrintMessage(
                         f"DrawingAssistant: Captured sheet {page.Label} -> "
                         f"latest_sheet_{safe_label}.png\n"
                     )
-
-                # Clean up temporary SVG
-                try:
-                    import os
-                    os.remove(svg_path)
-                except OSError:
-                    pass
 
             except Exception as e:
                 FreeCAD.Console.PrintWarning(
@@ -1763,11 +1771,10 @@ If there are PROBLEMS, explain briefly what's wrong and edit the relevant page f
             screenshots_dir = Path(self._project_dir) / "screenshots"
             screenshots_dir.mkdir(parents=True, exist_ok=True)
 
-            # Clean up stale isometric screenshot from older sessions
-            stale_iso = screenshots_dir / "latest_isometric.png"
-            if stale_iso.exists():
+            # Clean up stale files from older sessions
+            for stale in screenshots_dir.glob("latest_isometric.png"):
                 try:
-                    stale_iso.unlink()
+                    stale.unlink()
                 except OSError:
                     pass
 
