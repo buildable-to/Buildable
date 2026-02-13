@@ -132,14 +132,13 @@ class LLMWorker(QtCore.QThread):
     error = QtCore.Signal(str)
     tool_call = QtCore.Signal(str, dict)  # For progress indicator updates
 
-    def __init__(self, llm, user_input, context, conversation, screenshot=None,
+    def __init__(self, llm, user_input, context, conversation,
                  multi_angle_screenshots=None):
         super().__init__()
         self.llm = llm
         self.user_input = user_input
         self.context = context
         self.conversation = conversation
-        self.screenshot = screenshot
         self.multi_angle_screenshots = multi_angle_screenshots
 
     def run(self):
@@ -150,8 +149,8 @@ class LLMWorker(QtCore.QThread):
             self.llm.on_tool_call = on_tool_call
 
             response = self.llm.chat(
-                self.user_input, self.context, self.conversation, self.screenshot,
-                self.multi_angle_screenshots
+                self.user_input, self.context, self.conversation,
+                multi_angle_screenshots=self.multi_angle_screenshots
             )
             self.finished.emit(response)
         except Exception as e:
@@ -183,7 +182,6 @@ class DrawingAssistantDockWidget(QtWidgets.QDockWidget):
         self._plan_worker = None  # Worker for plan mode phase 2
         self.pending_input = None
         self._last_code = ""
-        self._last_screenshot = None  # Base64 PNG of last viewport capture
         self._last_execution_warnings = []  # Warnings from last code execution
         self._last_execution_error = None  # Error message from last failed execution
         self._last_multi_angle_screenshots = []  # Paths to multi-angle screenshots
@@ -730,13 +728,13 @@ Output ONLY a plan in this format:
 Do NOT write any code. Only output the numbered plan steps."""
 
             self.worker = LLMWorker(
-                self.llm, plan_prompt, context, conversation, self._last_screenshot,
+                self.llm, plan_prompt, context, conversation,
                 self._last_multi_angle_screenshots
             )
         else:
             # Normal mode: request code directly
             self.worker = LLMWorker(
-                self.llm, user_input, context, conversation, self._last_screenshot,
+                self.llm, user_input, context, conversation,
                 self._last_multi_angle_screenshots
             )
 
@@ -1273,7 +1271,6 @@ Read the relevant page file to understand what went wrong, then fix it."""
             if success:
                 SourceManager.clear_backup()
 
-                self._last_screenshot = self._capture_screenshot()
                 self._capture_multi_angle_screenshots()
 
                 change_set = ChangeDetector.detect_changes(
@@ -1383,7 +1380,7 @@ Now write the FreeCAD Python code to implement this plan exactly as specified.
 Return ONLY the Python code in a ```python code block."""
 
         self._plan_worker = LLMWorker(
-            self.llm, code_prompt, context, conversation, self._last_screenshot,
+            self.llm, code_prompt, context, conversation,
             self._last_multi_angle_screenshots
         )
         self._plan_worker.finished.connect(self._on_plan_code_response)
@@ -1443,7 +1440,6 @@ Return ONLY the Python code in a ```python code block."""
         change_set.execution_message = message
 
         if success:
-            self._last_screenshot = self._capture_screenshot()
             self._capture_multi_angle_screenshots()
 
             self._self_review_attempt = 0
@@ -1562,40 +1558,6 @@ Return ONLY the Python code in a ```python code block."""
             if not SourceManager.exists():
                 SourceManager.init_pages_dir()
 
-    def _capture_screenshot(self) -> str:
-        """Capture current viewport as base64 PNG."""
-        import tempfile
-        import base64
-        import os
-
-        try:
-            if not FreeCADGui.ActiveDocument:
-                return None
-
-            view = FreeCADGui.ActiveDocument.ActiveView
-            if not hasattr(view, "saveImage"):
-                return None
-
-            view.viewTop()
-            view.fitAll()
-            FreeCADGui.updateGui()
-
-            with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp_file:
-                tmp_path = tmp_file.name
-            try:
-                view.saveImage(tmp_path, 800, 600)
-                with open(tmp_path, "rb") as f:
-                    return base64.b64encode(f.read()).decode("utf-8")
-            finally:
-                if os.path.exists(tmp_path):
-                    os.unlink(tmp_path)
-
-        except Exception as e:
-            FreeCAD.Console.PrintWarning(
-                f"DrawingAssistant: Screenshot capture failed: {e}\n"
-            )
-            return None
-
     def _run_self_review(self, change_set):
         """Run self-review loop for 2D drawing results."""
         if not self.self_review_action.isChecked():
@@ -1642,7 +1604,6 @@ If there are PROBLEMS, explain briefly what's wrong and edit the relevant page f
 
         self._self_review_worker = LLMWorker(
             self.llm, review_prompt, "", [],
-            screenshot=None,
             multi_angle_screenshots=self._last_multi_angle_screenshots
         )
         self._self_review_worker.finished.connect(self._on_self_review_response)
@@ -2005,7 +1966,6 @@ If there are problems: Explain what's wrong and edit the relevant page file to f
 
         self._sandbox_review_worker = LLMWorker(
             self.llm, review_prompt, "", [],
-            screenshot=None,
             multi_angle_screenshots=screenshots
         )
         self._sandbox_review_worker.finished.connect(self._on_sandbox_review_response)

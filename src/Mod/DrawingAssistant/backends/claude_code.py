@@ -235,7 +235,6 @@ class ClaudeCodeBackend:
         user_message: str,
         context: str = "",
         history: list = None,
-        screenshot: str = None,
         multi_angle_screenshots: list = None,
     ) -> str:
         """Send message to Claude Code CLI and get response.
@@ -244,7 +243,6 @@ class ClaudeCodeBackend:
             user_message: The user's natural language request
             context: Optional document context string (passed in prompt if no CLAUDE.md)
             history: Optional conversation history (not used - Claude Code manages sessions)
-            screenshot: Optional base64-encoded PNG screenshot (saved to temp file)
             multi_angle_screenshots: Optional list of file paths to multi-angle screenshots
 
         Returns:
@@ -254,13 +252,8 @@ class ClaudeCodeBackend:
         self.last_context = context
         self.last_conversation = history[-6:] if history else []
 
-        # Handle screenshot - save to temp file for Claude to read
-        screenshot_path = None
-        if screenshot:
-            screenshot_path = self._save_screenshot(screenshot)
-
         # Build the prompt
-        prompt = self._build_prompt(user_message, context, screenshot_path, multi_angle_screenshots)
+        prompt = self._build_prompt(user_message, context, multi_angle_screenshots)
 
         # Build command - use stream-json for tool visibility
         # Note: stream-json requires --verbose when used with -p (print mode)
@@ -435,7 +428,7 @@ class ClaudeCodeBackend:
             FreeCAD.Console.PrintError(f"DrawingAssistant: Claude Code error: {e}\n")
             return f"# Error: {e}"
 
-    def _build_prompt(self, message: str, context: str, screenshot_path: str = None,
+    def _build_prompt(self, message: str, context: str,
                        multi_angle_screenshots: list = None) -> str:
         """Build the prompt for Claude Code.
 
@@ -454,16 +447,12 @@ class ClaudeCodeBackend:
             parts.append(f"## Document State\n{context}")
             parts.append("")
 
-        # Screenshots
-        if screenshot_path:
-            parts.append(f"[Screenshot of current viewport: {screenshot_path}]")
-
+        # Screenshots (top view + TechDraw sheet PNGs)
         if multi_angle_screenshots:
             parts.append("### Current screenshots:")
             for path in multi_angle_screenshots:
                 filename = Path(path).name
                 if filename.startswith("latest_sheet_"):
-                    # TechDraw page screenshot — extract label from filename
                     sheet_label = filename.replace("latest_sheet_", "").replace(".png", "").replace("_", " ")
                     parts.append(f'- Sheet "{sheet_label}" (printed drawing page): {path}')
                 elif "top" in filename:
@@ -473,56 +462,6 @@ class ClaudeCodeBackend:
             parts.append("")
 
         return "\n".join(parts)
-
-    def _save_screenshot(self, base64_data: str) -> str:
-        """Save base64 screenshot to project directory for Claude to read.
-
-        Screenshots are saved to {project_dir}/screenshots/ with timestamps.
-        They are kept for debugging/logging purposes (not deleted after use).
-
-        Args:
-            base64_data: Base64-encoded PNG image
-
-        Returns:
-            Path to saved screenshot file
-        """
-        import base64
-        from datetime import datetime
-
-        if not self.project_dir:
-            FreeCAD.Console.PrintWarning("DrawingAssistant: No project dir, cannot save screenshot\n")
-            return None
-
-        try:
-            # Create screenshots directory
-            screenshots_dir = Path(self.project_dir) / "screenshots"
-            screenshots_dir.mkdir(parents=True, exist_ok=True)
-
-            # Find next counter (like snapshots: 001, 002, etc.)
-            existing = list(screenshots_dir.glob("*.png"))
-            max_num = 0
-            for f in existing:
-                try:
-                    num = int(f.stem.split("_")[0])
-                    max_num = max(max_num, num)
-                except (ValueError, IndexError):
-                    pass
-            next_num = max_num + 1
-
-            # Generate filename: 001_2026-01-16_22-05.png
-            timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M")
-            filename = f"{next_num:03d}_{timestamp}.png"
-            path = screenshots_dir / filename
-
-            # Decode and save
-            image_data = base64.b64decode(base64_data)
-            path.write_bytes(image_data)
-
-            FreeCAD.Console.PrintMessage(f"DrawingAssistant: Screenshot saved to {path}\n")
-            return str(path)
-        except Exception as e:
-            FreeCAD.Console.PrintWarning(f"DrawingAssistant: Failed to save screenshot: {e}\n")
-            return None
 
     def _clean_response(self, response: str) -> str:
         """Clean up the response - remove markdown code blocks if present."""
