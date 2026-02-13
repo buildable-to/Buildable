@@ -764,7 +764,7 @@ Do NOT write any code. Only output the numbered plan steps."""
         )
 
         # If no backup or no change, just show the text response
-        if not old_source or old_source == new_source:
+        if old_source is None or old_source == new_source:
             FreeCAD.Console.PrintMessage("DrawingAssistant: No page changes detected\n")
             SourceManager.clear_backup()
             tool_calls = getattr(self.llm, 'last_tool_calls', None)

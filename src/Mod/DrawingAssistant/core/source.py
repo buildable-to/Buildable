@@ -1,18 +1,16 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 """
-Source Manager - Manage per-page drawing scripts for multi-page drawing sets.
+Source Manager - Manage drawing scripts in a pages/ directory.
 
-Drawing pages are stored as individual Python scripts in a pages/ directory:
-  {doc_stem}/pages/_shared.py        — Shared constants, executed first
-  {doc_stem}/pages/001_cover.py      — First drawing sheet
-  {doc_stem}/pages/002_notes.py      — Second drawing sheet
-  ...
+Drawing scripts are stored as Python files in a pages/ directory:
+  {doc_stem}/pages/*.py
 
-All pages are executed in sorted order with a shared namespace.
-This provides version-controllable, per-page source of truth.
+All *.py files are sorted (underscore-prefix first, then alphabetically)
+and executed together as one script. Users control file naming and organization.
+
+This provides version-controllable, per-file source of truth.
 """
 
-from datetime import datetime
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 
@@ -36,10 +34,6 @@ class _SourceManagerObserver:
         project_dir = file_path.parent / file_path.stem
         pages_dir = project_dir / "pages"
         pages_dir.mkdir(parents=True, exist_ok=True)
-
-        shared_path = pages_dir / "_shared.py"
-        if not shared_path.exists():
-            _init_shared_file(shared_path, doc.Name)
 
 
 def _register_observer():
@@ -72,33 +66,15 @@ def _unregister_observer():
 _register_observer()
 
 
-def _init_shared_file(shared_path: Path, doc_name: str) -> None:
-    """Create _shared.py with boilerplate."""
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    shared_path.write_text(
-        f"# FreeCAD Drawing Project - {doc_name}\n"
-        f"# Created: {timestamp}\n"
-        "#\n"
-        "# Shared constants and helpers for all pages.\n"
-        "# This file is executed first; its variables are available to all page scripts.\n"
-        "#\n"
-        "\n"
-        "import FreeCAD\n"
-        "import Draft\n"
-        "import math\n"
-        "\n"
-        'doc = FreeCAD.ActiveDocument or FreeCAD.newDocument("Drawing")\n'
-        "\n"
-        "# === Project Constants ===\n"
-        "# Add shared dimensions, grid spacing, material specs here.\n"
-        "# Example:\n"
-        "# GRID_SPACING_X = 6000  # mm\n"
-        "# GRID_SPACING_Y = 6000  # mm\n"
-        '# CONCRETE_CLASS = "C25/30"\n'
-        '# REBAR_GRADE = "A500c"\n',
-        encoding="utf-8",
-    )
-    FreeCAD.Console.PrintMessage(f"SourceManager: Initialized {shared_path.name}\n")
+def _page_sort_key(path: Path) -> tuple:
+    """Sort key: underscore-prefixed files first, then alphabetical.
+
+    This ensures files like _helpers.py execute before 001_cover.py,
+    matching the common convention of putting shared code in
+    underscore-prefixed files.
+    """
+    name = path.name
+    return (0, name) if name.startswith("_") else (1, name)
 
 
 # =============================================================================
@@ -121,30 +97,21 @@ def get_pages_dir() -> Optional[Path]:
 
 
 def list_pages() -> List[Path]:
-    """List all page files in execution order.
+    """List all script files in execution order.
 
-    Returns pages sorted by filename (numeric prefix ensures order).
-    Excludes _shared.py (it's a dependency, not a page).
+    Returns all *.py files sorted with underscore-prefixed files first,
+    then remaining files alphabetically. This means:
+    - _helpers.py, _shared.py execute first
+    - 001_cover.py, 002_plan.py execute in numeric order
+    - foundation.py, notes.py execute alphabetically
 
     Returns:
-        Sorted list of Path objects for each page .py file.
+        Sorted list of Path objects for each .py file.
     """
     pages_dir = get_pages_dir()
     if not pages_dir or not pages_dir.exists():
         return []
-    return sorted(pages_dir.glob("[0-9]*.py"))
-
-
-def get_shared_path() -> Optional[Path]:
-    """Get path to _shared.py constants file.
-
-    Returns:
-        Path to {pages_dir}/_shared.py, or None if not saved.
-    """
-    pages_dir = get_pages_dir()
-    if not pages_dir:
-        return None
-    return pages_dir / "_shared.py"
+    return sorted(pages_dir.glob("*.py"), key=_page_sort_key)
 
 
 # =============================================================================
@@ -168,13 +135,10 @@ def read_page(page_path: Path) -> str:
 
 
 def read_all_pages() -> str:
-    """Read _shared.py + all pages concatenated in order.
+    """Read all scripts concatenated in execution order.
 
-    Used for full document execution. Concatenates:
-    1. _shared.py (if exists)
-    2. Each page file in numeric order
-
-    Sections are separated by comments indicating the file boundary.
+    All *.py files in pages/ are sorted (underscore-prefix first,
+    then alphabetically) and concatenated with file boundary markers.
 
     Returns:
         Combined source code string.
@@ -184,50 +148,26 @@ def read_all_pages() -> str:
         return ""
 
     parts = []
-
-    # 1. _shared.py first
-    shared = pages_dir / "_shared.py"
-    if shared.exists():
-        content = read_page(shared)
-        if content.strip():
-            parts.append(f"# --- _shared.py ---\n{content}")
-
-    # 2. All numbered pages in order
     for page_path in list_pages():
         content = read_page(page_path)
         if content.strip():
-            parts.append(f"\n# --- {page_path.name} ---\n{content}")
+            parts.append(f"# --- {page_path.name} ---\n{content}")
 
-    return "\n".join(parts)
+    return "\n\n".join(parts)
 
 
 def list_pages_metadata() -> List[Dict[str, Any]]:
-    """Get metadata for all pages (for context building).
+    """Get metadata for all scripts (for context building).
 
     Returns list of dicts with:
-        - filename: str (e.g., "004_foundation_plan.py")
+        - filename: str
         - path: str (absolute path)
         - line_count: int
-        - first_comment: str (first # comment after header, used as description)
+        - first_comment: str (first descriptive # comment)
         - has_techdraw: bool
         - has_spreadsheet: bool
     """
-    pages_dir = get_pages_dir()
-    if not pages_dir or not pages_dir.exists():
-        return []
-
-    result = []
-
-    # Include _shared.py
-    shared = pages_dir / "_shared.py"
-    if shared.exists():
-        result.append(_get_page_metadata(shared))
-
-    # Include numbered pages
-    for page_path in list_pages():
-        result.append(_get_page_metadata(page_path))
-
-    return result
+    return [_get_page_metadata(p) for p in list_pages()]
 
 
 def _get_page_metadata(page_path: Path) -> Dict[str, Any]:
@@ -235,17 +175,16 @@ def _get_page_metadata(page_path: Path) -> Dict[str, Any]:
     content = read_page(page_path)
     lines = content.split("\n")
 
-    # Find first descriptive comment (skip header boilerplate)
+    # Find first descriptive comment (skip boilerplate headers)
     first_comment = ""
     for line in lines:
         stripped = line.strip()
         if stripped.startswith("# Page:") or stripped.startswith("# Drawing:"):
             first_comment = stripped.lstrip("# ").strip()
             break
-        # Skip standard boilerplate comments
         if stripped.startswith("#") and not any(
             kw in stripped.lower()
-            for kw in ["freecad", "created:", "shared", "script", "run in", "constants", "example"]
+            for kw in ["freecad", "created:", "spdx", "encoding", "!/"]
         ):
             first_comment = stripped.lstrip("# ").strip()
             break
@@ -266,9 +205,10 @@ def _get_page_metadata(page_path: Path) -> Dict[str, Any]:
 
 
 def init_pages_dir() -> bool:
-    """Initialize the pages/ directory with _shared.py boilerplate.
+    """Initialize the pages/ directory.
 
-    Called on document save if pages/ doesn't exist.
+    Creates the directory if it doesn't exist. Does not create any
+    boilerplate files -- the user controls project structure.
 
     Returns:
         True if created or already exists, False on error.
@@ -279,10 +219,6 @@ def init_pages_dir() -> bool:
 
     try:
         pages_dir.mkdir(parents=True, exist_ok=True)
-        shared = pages_dir / "_shared.py"
-        if not shared.exists():
-            doc_name = FreeCAD.ActiveDocument.Name if FreeCAD.ActiveDocument else "Drawing"
-            _init_shared_file(shared, doc_name)
         return True
     except Exception as e:
         FreeCAD.Console.PrintWarning(f"SourceManager: Failed to init pages/: {e}\n")
@@ -290,11 +226,11 @@ def init_pages_dir() -> bool:
 
 
 def exists() -> bool:
-    """Check if pages/ directory exists with _shared.py."""
+    """Check if pages/ directory exists."""
     pages_dir = get_pages_dir()
     if not pages_dir:
         return False
-    return (pages_dir / "_shared.py").exists()
+    return pages_dir.exists()
 
 
 # =============================================================================
@@ -389,23 +325,15 @@ def get_backup_combined() -> Optional[str]:
         return None
 
     parts = []
-
-    # _shared.py first
-    if "_shared.py" in _pages_backup:
-        content = _pages_backup["_shared.py"]
-        if content.strip():
-            parts.append(f"# --- _shared.py ---\n{content}")
-
-    # Numbered pages in sorted order
-    page_files = sorted(
-        fn for fn in _pages_backup if fn != "_shared.py" and fn[0].isdigit()
-    )
-    for filename in page_files:
+    for filename in sorted(
+        _pages_backup.keys(),
+        key=lambda n: (0, n) if n.startswith("_") else (1, n),
+    ):
         content = _pages_backup[filename]
         if content.strip():
-            parts.append(f"\n# --- {filename} ---\n{content}")
+            parts.append(f"# --- {filename} ---\n{content}")
 
-    return "\n".join(parts) if parts else ""
+    return "\n\n".join(parts) if parts else ""
 
 
 def clear_backup():

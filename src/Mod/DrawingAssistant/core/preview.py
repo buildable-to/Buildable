@@ -231,9 +231,9 @@ class PreviewManager:
     def _create_sandbox_preview(self, code: str) -> tuple:
         """Execute code in temp doc and show preview in main doc.
 
-        The sandbox first runs all pages to establish the baseline state,
-        then runs the LLM's new code on top. This ensures variables from
-        _shared.py (like `width`, `length`) are available.
+        The sandbox first runs all existing page scripts to establish the
+        baseline state, then runs the LLM's new code on top. This ensures
+        variables from earlier scripts are available.
 
         Only NEW objects (created by LLM code) are shown as green preview.
 
