@@ -1742,10 +1742,11 @@ If there are PROBLEMS, explain briefly what's wrong and edit the relevant page f
                         f"latest_sheet_{safe_label}.png\n"
                     )
 
-                # Keep SVG for debugging (TODO: remove after investigation)
-                FreeCAD.Console.PrintMessage(
-                    f"DrawingAssistant: SVG kept at {svg_path}\n"
-                )
+                # Clean up temp SVG
+                try:
+                    Path(svg_path).unlink()
+                except OSError:
+                    pass
 
             except Exception as e:
                 FreeCAD.Console.PrintWarning(
@@ -1758,73 +1759,95 @@ If there are PROBLEMS, explain briefly what's wrong and edit the relevant page f
         """Capture screenshots of the current drawing state.
 
         Captures top view (Draft geometry) + one PNG per TechDraw DrawPage.
+        The active view may be a TechDraw tab (FreeCAD auto-activates it
+        after creating a DrawPage), so we activate the 3D view tab first.
         """
         results = []
 
-        try:
-            if not FreeCADGui.ActiveDocument:
-                return []
+        if not FreeCADGui.ActiveDocument:
+            return []
 
+        if not self._project_dir:
+            return []
+
+        screenshots_dir = Path(self._project_dir) / "screenshots"
+        screenshots_dir.mkdir(parents=True, exist_ok=True)
+
+        # Clean up stale files from older sessions
+        for stale in screenshots_dir.glob("latest_isometric.png"):
+            try:
+                stale.unlink()
+            except OSError:
+                pass
+
+        # --- Top view (Draft geometry in 3D viewport) ---
+        # After creating TechDraw pages, FreeCAD activates the TechDraw tab.
+        # We need to activate the 3D view subwindow to get a proper ActiveView
+        # with saveImage/viewTop/fitAll methods.
+        try:
             view = FreeCADGui.ActiveDocument.ActiveView
             if not hasattr(view, "saveImage"):
-                return []
+                # Activate the 3D view MDI tab
+                mdi = FreeCADGui.getMainWindow().centralWidget()
+                for sub in mdi.subWindowList():
+                    widget = sub.widget()
+                    if hasattr(widget, "getSceneGraph"):
+                        mdi.setActiveSubWindow(sub)
+                        FreeCADGui.updateGui()
+                        break
+                # Re-fetch ActiveView after switching tabs
+                view = FreeCADGui.ActiveDocument.ActiveView
 
-            if not self._project_dir:
-                return []
+            if view and hasattr(view, "saveImage"):
+                saved_camera = None
+                if hasattr(view, "getCamera"):
+                    saved_camera = view.getCamera()
 
-            screenshots_dir = Path(self._project_dir) / "screenshots"
-            screenshots_dir.mkdir(parents=True, exist_ok=True)
-
-            # Clean up stale files from older sessions
-            for stale in screenshots_dir.glob("latest_isometric.png"):
-                try:
-                    stale.unlink()
-                except OSError:
-                    pass
-
-            # --- Top view (Draft geometry in 3D viewport) ---
-            saved_camera = None
-            if hasattr(view, "getCamera"):
-                saved_camera = view.getCamera()
-
-            if hasattr(view, "setAnimationEnabled"):
-                view.setAnimationEnabled(False)
-
-            try:
-                view.viewTop()
-                view.fitAll()
-                FreeCADGui.updateGui()
-
-                filepath = screenshots_dir / "latest_top.png"
-                view.saveImage(str(filepath), 800, 600)
-                results.append(str(filepath))
-                FreeCAD.Console.PrintMessage(
-                    f"DrawingAssistant: Saved {filepath.name}\n"
-                )
-            except Exception as e:
-                FreeCAD.Console.PrintWarning(
-                    f"DrawingAssistant: Failed to capture top view: {e}\n"
-                )
-            finally:
-                if saved_camera and hasattr(view, "setCamera"):
-                    view.setCamera(saved_camera)
-                    FreeCADGui.updateGui()
                 if hasattr(view, "setAnimationEnabled"):
-                    view.setAnimationEnabled(True)
+                    view.setAnimationEnabled(False)
 
-            # --- TechDraw page screenshots ---
+                try:
+                    view.viewTop()
+                    view.fitAll()
+                    FreeCADGui.updateGui()
+
+                    filepath = screenshots_dir / "latest_top.png"
+                    view.saveImage(str(filepath), 800, 600)
+                    results.append(str(filepath))
+                    FreeCAD.Console.PrintMessage(
+                        f"DrawingAssistant: Saved {filepath.name}\n"
+                    )
+                except Exception as e:
+                    FreeCAD.Console.PrintWarning(
+                        f"DrawingAssistant: Failed to capture top view: {e}\n"
+                    )
+                finally:
+                    if saved_camera and hasattr(view, "setCamera"):
+                        view.setCamera(saved_camera)
+                        FreeCADGui.updateGui()
+                    if hasattr(view, "setAnimationEnabled"):
+                        view.setAnimationEnabled(True)
+            else:
+                FreeCAD.Console.PrintWarning(
+                    "DrawingAssistant: No 3D view found for top screenshot\n"
+                )
+        except Exception as e:
+            FreeCAD.Console.PrintWarning(
+                f"DrawingAssistant: Top view capture error: {e}\n"
+            )
+
+        # --- TechDraw page screenshots ---
+        try:
             results.extend(self._capture_techdraw_screenshots(
                 doc=FreeCAD.ActiveDocument, screenshots_dir=screenshots_dir
             ))
-
-            self._last_multi_angle_screenshots = results
-            return results
-
         except Exception as e:
             FreeCAD.Console.PrintWarning(
-                f"DrawingAssistant: Multi-angle capture failed: {e}\n"
+                f"DrawingAssistant: TechDraw capture error: {e}\n"
             )
-            return []
+
+        self._last_multi_angle_screenshots = results
+        return results
 
     # =========================================================================
     # Sandbox Self-Review
@@ -1850,11 +1873,7 @@ If there are PROBLEMS, explain briefly what's wrong and edit the relevant page f
             FreeCADGui.updateGui()
 
             gui_doc = FreeCADGui.getDocument(sandbox_doc_name)
-            if not gui_doc or not gui_doc.ActiveView:
-                return []
-
-            view = gui_doc.ActiveView
-            if not hasattr(view, "saveImage"):
+            if not gui_doc:
                 return []
 
             if not self._project_dir:
@@ -1864,30 +1883,46 @@ If there are PROBLEMS, explain briefly what's wrong and edit the relevant page f
             screenshots_dir.mkdir(parents=True, exist_ok=True)
 
             # --- Top view ---
-            saved_camera = None
-            if hasattr(view, "getCamera"):
-                saved_camera = view.getCamera()
+            # ActiveView may be TechDraw tab — activate 3D view first
+            view = gui_doc.ActiveView if gui_doc.ActiveView else None
+            if view and not hasattr(view, "saveImage"):
+                try:
+                    mdi = FreeCADGui.getMainWindow().centralWidget()
+                    for sub in mdi.subWindowList():
+                        widget = sub.widget()
+                        if hasattr(widget, "getSceneGraph"):
+                            mdi.setActiveSubWindow(sub)
+                            FreeCADGui.updateGui()
+                            break
+                    view = gui_doc.ActiveView
+                except Exception:
+                    view = None
 
-            if hasattr(view, "setAnimationEnabled"):
-                view.setAnimationEnabled(False)
+            if view and hasattr(view, "saveImage"):
+                saved_camera = None
+                if hasattr(view, "getCamera"):
+                    saved_camera = view.getCamera()
 
-            try:
-                view.viewTop()
-                view.fitAll()
-                FreeCADGui.updateGui()
-
-                filepath = screenshots_dir / "latest_top.png"
-                view.saveImage(str(filepath), 800, 600)
-                results.append(str(filepath))
-            except Exception as e:
-                FreeCAD.Console.PrintWarning(
-                    f"DrawingAssistant: Failed capture top: {e}\n"
-                )
-            finally:
-                if saved_camera and hasattr(view, "setCamera"):
-                    view.setCamera(saved_camera)
                 if hasattr(view, "setAnimationEnabled"):
-                    view.setAnimationEnabled(True)
+                    view.setAnimationEnabled(False)
+
+                try:
+                    view.viewTop()
+                    view.fitAll()
+                    FreeCADGui.updateGui()
+
+                    filepath = screenshots_dir / "latest_top.png"
+                    view.saveImage(str(filepath), 800, 600)
+                    results.append(str(filepath))
+                except Exception as e:
+                    FreeCAD.Console.PrintWarning(
+                        f"DrawingAssistant: Failed capture top: {e}\n"
+                    )
+                finally:
+                    if saved_camera and hasattr(view, "setCamera"):
+                        view.setCamera(saved_camera)
+                    if hasattr(view, "setAnimationEnabled"):
+                        view.setAnimationEnabled(True)
 
             # --- TechDraw page screenshots ---
             results.extend(self._capture_techdraw_screenshots(
