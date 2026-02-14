@@ -285,31 +285,70 @@ class MessageCard(QtWidgets.QFrame):
         self._fade_anim.start()
 
     def _setup_user_message(self):
-        """User message: right-aligned, no background."""
+        """User message: right-aligned, no background, with optional image thumbnails."""
         self.setStyleSheet("background: transparent;")
 
-        layout = QtWidgets.QHBoxLayout(self)
-        layout.setContentsMargins(60, 8, 12, 8)  # Left margin to push right
-        layout.setSpacing(0)
+        outer_layout = QtWidgets.QVBoxLayout(self)
+        outer_layout.setContentsMargins(60, 8, 12, 8)  # Left margin to push right
+        outer_layout.setSpacing(6)
 
-        # Spacer to push content right
-        layout.addStretch()
+        # Text label (right-aligned row)
+        text_content = self._message.displayed_text or self._message.text
+        if text_content and text_content != "(image attached)":
+            text_row = QtWidgets.QHBoxLayout()
+            text_row.setSpacing(0)
+            text_row.addStretch()
 
-        # Text label
-        self._text_label = QtWidgets.QLabel(self._message.displayed_text or self._message.text)
-        self._text_label.setWordWrap(True)
-        self._text_label.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
-        self._text_label.setStyleSheet(f"""
-            QLabel {{
-                color: {Theme.COLORS['user_msg_text']};
-                font-size: {Theme.FONTS['size_base']};
-                line-height: {Theme.FONTS['line_height_normal']};
-                background: transparent;
-                padding: 0;
-            }}
-        """)
-        self._text_label.setAlignment(QtCore.Qt.AlignRight)
-        layout.addWidget(self._text_label)
+            self._text_label = QtWidgets.QLabel(text_content)
+            self._text_label.setWordWrap(True)
+            self._text_label.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
+            self._text_label.setStyleSheet(f"""
+                QLabel {{
+                    color: {Theme.COLORS['user_msg_text']};
+                    font-size: {Theme.FONTS['size_base']};
+                    line-height: {Theme.FONTS['line_height_normal']};
+                    background: transparent;
+                    padding: 0;
+                }}
+            """)
+            self._text_label.setAlignment(QtCore.Qt.AlignRight)
+            text_row.addWidget(self._text_label)
+            outer_layout.addLayout(text_row)
+
+        # Image thumbnails (right-aligned row)
+        if self._message.image_paths:
+            img_row = QtWidgets.QHBoxLayout()
+            img_row.setSpacing(6)
+            img_row.addStretch()
+            for path in self._message.image_paths:
+                pixmap = QtGui.QPixmap(path)
+                if not pixmap.isNull():
+                    thumb = pixmap.scaled(
+                        120, 120,
+                        QtCore.Qt.KeepAspectRatio,
+                        QtCore.Qt.SmoothTransformation,
+                    )
+                    label = QtWidgets.QLabel()
+                    label.setPixmap(thumb)
+                    label.setStyleSheet(f"""
+                        QLabel {{
+                            border: 1px solid {Theme.COLORS['border_default']};
+                            border-radius: {Theme.RADIUS['sm']};
+                            background: transparent;
+                            padding: 2px;
+                        }}
+                    """)
+                    label.setCursor(QtCore.Qt.PointingHandCursor)
+                    p = path  # capture for lambda
+                    label.mousePressEvent = lambda e, pp=p: self._open_image(pp)
+                    img_row.addWidget(label)
+            outer_layout.addLayout(img_row)
+
+    def _open_image(self, path: str):
+        """Open image in system default viewer."""
+        from PySide6.QtGui import QDesktopServices
+        from PySide6.QtCore import QUrl
+        QDesktopServices.openUrl(QUrl.fromLocalFile(path))
 
     def _setup_assistant_message(self):
         """Assistant message: card with subtle border and shadow."""

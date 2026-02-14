@@ -608,9 +608,26 @@ class DrawingAssistantDockWidget(QtWidgets.QDockWidget):
         except Exception as e:
             FreeCAD.Console.PrintError(f"Failed to open sessions folder: {e}\n")
 
-    def _on_send(self, user_input: str):
-        """Handle message submission."""
-        if not user_input:
+    def _on_send(self, user_input: str, user_images: list = None):
+        """Handle message submission.
+
+        The user message is added to the chat HERE (not in ChatWidget) so that
+        image_paths are available at widget-creation time for thumbnail rendering.
+
+        Args:
+            user_input: Text from the chat input.
+            user_images: List of QImage objects pasted/dropped by user.
+        """
+        if user_images is None:
+            user_images = []
+        FreeCAD.Console.PrintMessage(
+            f"DrawingAssistant: DrawingPanel._on_send() — "
+            f"user_input='{(user_input or '')[:50]}', "
+            f"user_images={len(user_images)}, project_dir={self._project_dir}\n"
+        )
+
+        display_text = user_input or "(image attached)" if (user_input or user_images) else ""
+        if not user_input and not user_images:
             return
 
         # Prevent double-send
@@ -620,26 +637,37 @@ class DrawingAssistantDockWidget(QtWidgets.QDockWidget):
         # Require document to be saved first
         doc = FreeCAD.ActiveDocument
         if not doc or not doc.FileName:
+            self._chat.add_user_message(display_text)
             self._prompt_save_document()
             return
 
         self.pending_input = user_input
 
+        # Update project directory first (needed for image saving)
+        self._update_project_dir()
+
+        # Save user-attached images to disk
+        user_image_paths = self._save_user_images(user_images)
+        FreeCAD.Console.PrintMessage(
+            f"DrawingAssistant: Saved {len(user_image_paths)} user images to disk\n"
+        )
+
+        # Add user message to chat WITH image paths (so thumbnails render)
+        self._chat.add_user_message(display_text, image_paths=user_image_paths)
+
         # Log user prompt to console for debugging
-        preview = user_input.replace('\n', ' ')
+        preview = display_text.replace('\n', ' ')
         FreeCAD.Console.PrintMessage(f"DrawingAssistant: User: {preview}\n")
 
         # Log message sent
         ActivityLogger.log_message_sent(
-            user_input, session_id=self.session_manager.get_current_session_id()
+            display_text,
+            session_id=self.session_manager.get_current_session_id()
         )
 
         # Show typing indicator
         self._chat.show_typing(show_review_phase=self.self_review_action.isChecked())
         self._chat.set_input_enabled(False)
-
-        # Update project directory (handles document changes)
-        self._update_project_dir()
 
         # Ensure pages/ directory exists
         self._ensure_pages_dir()
@@ -673,6 +701,11 @@ class DrawingAssistantDockWidget(QtWidgets.QDockWidget):
         # Get conversation history
         conversation = self._chat.get_conversation_history()
 
+        # Merge auto-generated screenshots with user-attached images
+        all_screenshots = self._get_top_view_screenshots()
+        if user_image_paths:
+            all_screenshots.extend(user_image_paths)
+
         # Check if plan mode is enabled
         self._plan_mode_request = self.plan_mode_action.isChecked()
 
@@ -693,19 +726,58 @@ Do NOT write any code. Only output the numbered plan steps."""
 
             self.worker = LLMWorker(
                 self.llm, plan_prompt, context, conversation,
-                self._get_top_view_screenshots()
+                all_screenshots
             )
         else:
             # Normal mode: request code directly
             self.worker = LLMWorker(
-                self.llm, user_input, context, conversation,
-                self._get_top_view_screenshots()
+                self.llm, user_input or "(image attached)", context,
+                conversation, all_screenshots
             )
 
         self.worker.finished.connect(self._on_response)
         self.worker.error.connect(self._on_error)
         self.worker.tool_call.connect(self._on_tool_call)
         self.worker.start()
+
+    def _save_user_images(self, images: list) -> list:
+        """Save user-pasted images to project user_uploads/ directory.
+
+        Args:
+            images: List of QImage objects
+
+        Returns:
+            List of saved file paths
+        """
+        if not images or not self._project_dir:
+            return []
+
+        uploads_dir = Path(self._project_dir) / "user_uploads"
+        uploads_dir.mkdir(parents=True, exist_ok=True)
+
+        # Find next counter
+        existing = list(uploads_dir.glob("*.png"))
+        max_num = 0
+        for f in existing:
+            try:
+                num = int(f.stem.split("_")[0])
+                max_num = max(max_num, num)
+            except (ValueError, IndexError):
+                pass
+
+        saved_paths = []
+        for i, image in enumerate(images):
+            next_num = max_num + 1 + i
+            timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M")
+            filename = f"{next_num:03d}_{timestamp}.png"
+            path = uploads_dir / filename
+            image.save(str(path), "PNG")
+            saved_paths.append(str(path))
+            FreeCAD.Console.PrintMessage(
+                f"DrawingAssistant: Saved user image: user_uploads/{filename}\n"
+            )
+
+        return saved_paths
 
     def _on_response(self, response: str):
         """Handle successful LLM response - create preview or show plan."""

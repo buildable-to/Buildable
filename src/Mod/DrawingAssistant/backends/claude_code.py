@@ -473,16 +473,26 @@ class ClaudeCodeBackend:
             parts.append(f"## Document State\n{context}")
             parts.append("")
 
-        # Top view screenshot (for visual context on user requests)
+        # Screenshots (user-attached + auto-generated)
         if multi_angle_screenshots:
-            parts.append("### Current state:")
-            for path in multi_angle_screenshots:
-                filename = Path(path).name
-                if "review_top" in filename:
-                    parts.append(f"- Top view (Draft geometry): {path}")
-                else:
-                    parts.append(f"- {filename}: {path}")
-            parts.append("")
+            user_images = [p for p in multi_angle_screenshots if "/user_uploads/" in p]
+            auto_images = [p for p in multi_angle_screenshots if "/user_uploads/" not in p]
+
+            if user_images:
+                parts.append("### User-attached images:")
+                for path in user_images:
+                    parts.append(f"- {path}")
+                parts.append("")
+
+            if auto_images:
+                parts.append("### Current state:")
+                for path in auto_images:
+                    filename = Path(path).name
+                    if "review_top" in filename:
+                        parts.append(f"- Top view (Draft geometry): {path}")
+                    else:
+                        parts.append(f"- {filename}: {path}")
+                parts.append("")
 
         return "\n".join(parts)
 

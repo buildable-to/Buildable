@@ -165,6 +165,10 @@ class SessionManager:
         if hasattr(message, 'changes') and message.changes:
             message_dict["changes"] = message.changes
 
+        # Include image file paths if present
+        if hasattr(message, 'image_paths') and message.image_paths:
+            message_dict["image_paths"] = message.image_paths
+
         # Append to current session
         self._current_session_data["messages"].append(message_dict)
         self._current_session_data["updated"] = datetime.now().isoformat()
