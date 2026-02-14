@@ -96,27 +96,26 @@ def _svg_to_png(svg_path: str, png_path: str, width: int = 2000) -> bool:
         return False
 
 
-def _freeze_mdi_subwindows():
-    """Disable painting on every MDI sub-window before object deletion.
+def _close_techdraw_mdi_tabs():
+    """Close TechDraw MDI tabs before object deletion.
 
     TechDraw's QGVPage::drawBackground() accesses the DrawPage C++ object.
-    doc.removeObject() can trigger paint events synchronously (C++ signals
-    → PySide → processEvents → expose event → paint on freed memory).
+    If the DrawPage is freed while QGVPage still exists, expose events can
+    trigger a paint on freed memory (SIGSEGV).  setUpdatesEnabled(False)
+    does NOT prevent this — expose events bypass it.
 
-    setUpdatesEnabled(False) must be set on each sub-window directly —
-    QMdiSubWindow has the Qt::Window flag so the setting does NOT cascade
-    from the parent QMdiArea.
-
-    Returns the list of frozen sub-windows (to re-enable in finally block).
+    Closing the MDI subwindow destroys QGVPage entirely.  FreeCAD recreates
+    TechDraw tabs automatically when new DrawPages are created and
+    doc.recompute() runs.
     """
     try:
         mdi = FreeCADGui.getMainWindow().centralWidget()
-        subs = list(mdi.subWindowList())
-        for sub in subs:
-            sub.setUpdatesEnabled(False)
-        return subs
+        for sub in list(mdi.subWindowList()):
+            widget = sub.widget()
+            if widget and "MDIViewPage" in widget.metaObject().className():
+                sub.close()
     except Exception:
-        return []
+        pass
 
 
 def _find_techdraw_pages(doc) -> list:
@@ -1225,41 +1224,23 @@ Read the relevant page file to understand what went wrong, then fix it."""
             # IMPORTANT: Reverse order to avoid SIGSEGV from dangling links
             doc = FreeCAD.ActiveDocument
             if doc:
-                # Freeze MDI painting BEFORE any object deletion.
-                # TechDraw's QGVPage can receive paint events during
-                # removeObject() and crash accessing the freed DrawPage.
-                # Freeze every MDI sub-window to prevent paint events
-                # during object deletion.  QMdiSubWindow has Qt::Window
-                # flag so setUpdatesEnabled does NOT cascade from the
-                # parent QMdiArea — must be set per sub-window.
-                frozen_subs = _freeze_mdi_subwindows()
-                try:
-                    objects_to_remove = [
-                        obj.Name for obj in reversed(doc.Objects)
-                        if obj.TypeId not in ("App::Origin", "App::Plane", "App::Line")
-                    ]
-                    FreeCAD.Console.PrintMessage(
-                        f"DrawingAssistant: Clearing {len(objects_to_remove)} objects before re-execution\n"
-                    )
-                    for obj_name in objects_to_remove:
-                        try:
-                            doc.removeObject(obj_name)
-                        except Exception:
-                            pass
-                    doc.recompute()
-                finally:
-                    for sub in frozen_subs:
-                        try:
-                            sub.setUpdatesEnabled(True)
-                        except Exception:
-                            pass
+                # Close TechDraw MDI tabs to prevent SIGSEGV — their
+                # QGVPage widget would paint on freed DrawPage memory.
+                _close_techdraw_mdi_tabs()
 
-                # Let Qt process MDI tab cleanup so the 3D view is
-                # active again before the executor's View3DGuard installs.
-                try:
-                    QtWidgets.QApplication.processEvents()
-                except Exception:
-                    pass
+                objects_to_remove = [
+                    obj.Name for obj in reversed(doc.Objects)
+                    if obj.TypeId not in ("App::Origin", "App::Plane", "App::Line")
+                ]
+                FreeCAD.Console.PrintMessage(
+                    f"DrawingAssistant: Clearing {len(objects_to_remove)} objects before re-execution\n"
+                )
+                for obj_name in objects_to_remove:
+                    try:
+                        doc.removeObject(obj_name)
+                    except Exception:
+                        pass
+                doc.recompute()
 
             # Execute the new pages
             success, message, warnings = CodeExecutor.execute(source_content)
@@ -1635,6 +1616,8 @@ If there are PROBLEMS, explain briefly what's wrong and edit the relevant page f
 
             doc = FreeCAD.ActiveDocument
             if doc:
+                _close_techdraw_mdi_tabs()
+
                 objects_to_remove = [
                     obj.Name for obj in reversed(doc.Objects)
                     if obj.TypeId not in ("App::Origin", "App::Plane", "App::Line")
@@ -1644,9 +1627,6 @@ If there are PROBLEMS, explain briefly what's wrong and edit the relevant page f
                         doc.removeObject(obj_name)
                     except Exception:
                         pass
-
-                # Flush document state after clearing — TechDraw keeps internal
-                # references that cause 'NoneType' errors if not cleaned up
                 doc.recompute()
 
             success, message, warnings = CodeExecutor.execute(source_content)
@@ -1756,96 +1736,28 @@ If there are PROBLEMS, explain briefly what's wrong and edit the relevant page f
         return results
 
     def _capture_multi_angle_screenshots(self) -> list:
-        """Capture screenshots of the current drawing state.
+        """Capture PNG screenshots of each TechDraw page.
 
-        Captures top view (Draft geometry) + one PNG per TechDraw DrawPage.
-        The active view may be a TechDraw tab (FreeCAD auto-activates it
-        after creating a DrawPage), so we activate the 3D view tab first.
+        Uses TechDrawGui.exportPageAsSvg() which includes the template
+        (border, title block).  No MDI tab interaction needed.
         """
-        results = []
-
-        if not FreeCADGui.ActiveDocument:
-            return []
-
-        if not self._project_dir:
+        if not FreeCADGui.ActiveDocument or not self._project_dir:
             return []
 
         screenshots_dir = Path(self._project_dir) / "screenshots"
         screenshots_dir.mkdir(parents=True, exist_ok=True)
 
-        # Clean up stale files from older sessions
-        for stale in screenshots_dir.glob("latest_isometric.png"):
-            try:
-                stale.unlink()
-            except OSError:
-                pass
-
-        # --- Top view (Draft geometry in 3D viewport) ---
-        # After creating TechDraw pages, FreeCAD activates the TechDraw tab.
-        # We need to activate the 3D view subwindow to get a proper ActiveView
-        # with saveImage/viewTop/fitAll methods.
-        try:
-            view = FreeCADGui.ActiveDocument.ActiveView
-            if not hasattr(view, "saveImage"):
-                # Activate the 3D view MDI tab
-                mdi = FreeCADGui.getMainWindow().centralWidget()
-                for sub in mdi.subWindowList():
-                    widget = sub.widget()
-                    if hasattr(widget, "getSceneGraph"):
-                        mdi.setActiveSubWindow(sub)
-                        FreeCADGui.updateGui()
-                        break
-                # Re-fetch ActiveView after switching tabs
-                view = FreeCADGui.ActiveDocument.ActiveView
-
-            if view and hasattr(view, "saveImage"):
-                saved_camera = None
-                if hasattr(view, "getCamera"):
-                    saved_camera = view.getCamera()
-
-                if hasattr(view, "setAnimationEnabled"):
-                    view.setAnimationEnabled(False)
-
+        # Clean stale files from older sessions
+        for pattern in ("latest_isometric.png", "latest_top.png"):
+            for stale in screenshots_dir.glob(pattern):
                 try:
-                    view.viewTop()
-                    view.fitAll()
-                    FreeCADGui.updateGui()
+                    stale.unlink()
+                except OSError:
+                    pass
 
-                    filepath = screenshots_dir / "latest_top.png"
-                    view.saveImage(str(filepath), 800, 600)
-                    results.append(str(filepath))
-                    FreeCAD.Console.PrintMessage(
-                        f"DrawingAssistant: Saved {filepath.name}\n"
-                    )
-                except Exception as e:
-                    FreeCAD.Console.PrintWarning(
-                        f"DrawingAssistant: Failed to capture top view: {e}\n"
-                    )
-                finally:
-                    if saved_camera and hasattr(view, "setCamera"):
-                        view.setCamera(saved_camera)
-                        FreeCADGui.updateGui()
-                    if hasattr(view, "setAnimationEnabled"):
-                        view.setAnimationEnabled(True)
-            else:
-                FreeCAD.Console.PrintWarning(
-                    "DrawingAssistant: No 3D view found for top screenshot\n"
-                )
-        except Exception as e:
-            FreeCAD.Console.PrintWarning(
-                f"DrawingAssistant: Top view capture error: {e}\n"
-            )
-
-        # --- TechDraw page screenshots ---
-        try:
-            results.extend(self._capture_techdraw_screenshots(
-                doc=FreeCAD.ActiveDocument, screenshots_dir=screenshots_dir
-            ))
-        except Exception as e:
-            FreeCAD.Console.PrintWarning(
-                f"DrawingAssistant: TechDraw capture error: {e}\n"
-            )
-
+        results = self._capture_techdraw_screenshots(
+            doc=FreeCAD.ActiveDocument, screenshots_dir=screenshots_dir
+        )
         self._last_multi_angle_screenshots = results
         return results
 
@@ -1854,12 +1766,9 @@ If there are PROBLEMS, explain briefly what's wrong and edit the relevant page f
     # =========================================================================
 
     def _capture_sandbox_screenshots(self, sandbox_doc_name: str) -> list:
-        """Capture screenshots from sandbox document (top view + TechDraw pages)."""
-        results = []
-
+        """Capture TechDraw page screenshots from sandbox document."""
         original_doc = FreeCAD.ActiveDocument
         original_gui_doc = FreeCADGui.ActiveDocument
-
         try:
             sandbox_doc = FreeCAD.getDocument(sandbox_doc_name)
             if not sandbox_doc:
@@ -1872,71 +1781,20 @@ If there are PROBLEMS, explain briefly what's wrong and edit the relevant page f
             FreeCADGui.setActiveDocument(sandbox_doc_name)
             FreeCADGui.updateGui()
 
-            gui_doc = FreeCADGui.getDocument(sandbox_doc_name)
-            if not gui_doc:
-                return []
-
             if not self._project_dir:
                 return []
 
             screenshots_dir = Path(self._project_dir) / "screenshots"
             screenshots_dir.mkdir(parents=True, exist_ok=True)
 
-            # --- Top view ---
-            # ActiveView may be TechDraw tab — activate 3D view first
-            view = gui_doc.ActiveView if gui_doc.ActiveView else None
-            if view and not hasattr(view, "saveImage"):
-                try:
-                    mdi = FreeCADGui.getMainWindow().centralWidget()
-                    for sub in mdi.subWindowList():
-                        widget = sub.widget()
-                        if hasattr(widget, "getSceneGraph"):
-                            mdi.setActiveSubWindow(sub)
-                            FreeCADGui.updateGui()
-                            break
-                    view = gui_doc.ActiveView
-                except Exception:
-                    view = None
-
-            if view and hasattr(view, "saveImage"):
-                saved_camera = None
-                if hasattr(view, "getCamera"):
-                    saved_camera = view.getCamera()
-
-                if hasattr(view, "setAnimationEnabled"):
-                    view.setAnimationEnabled(False)
-
-                try:
-                    view.viewTop()
-                    view.fitAll()
-                    FreeCADGui.updateGui()
-
-                    filepath = screenshots_dir / "latest_top.png"
-                    view.saveImage(str(filepath), 800, 600)
-                    results.append(str(filepath))
-                except Exception as e:
-                    FreeCAD.Console.PrintWarning(
-                        f"DrawingAssistant: Failed capture top: {e}\n"
-                    )
-                finally:
-                    if saved_camera and hasattr(view, "setCamera"):
-                        view.setCamera(saved_camera)
-                    if hasattr(view, "setAnimationEnabled"):
-                        view.setAnimationEnabled(True)
-
-            # --- TechDraw page screenshots ---
-            results.extend(self._capture_techdraw_screenshots(
+            return self._capture_techdraw_screenshots(
                 doc=sandbox_doc, screenshots_dir=screenshots_dir
-            ))
-
-            return results
-
+            )
         except Exception as e:
             FreeCAD.Console.PrintWarning(
-                f"DrawingAssistant: Sandbox screenshot capture failed: {e}\n"
+                f"DrawingAssistant: Sandbox screenshot error: {e}\n"
             )
             return []
-
         finally:
             if original_doc:
                 try:
