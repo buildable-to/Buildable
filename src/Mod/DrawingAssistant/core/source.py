@@ -12,7 +12,7 @@ This provides version-controllable, per-file source of truth.
 """
 
 from pathlib import Path
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Tuple
 
 import FreeCAD
 
@@ -351,6 +351,73 @@ def has_backup() -> bool:
 def get_backup_content() -> Optional[str]:
     """Backward compat alias for get_backup_combined()."""
     return get_backup_combined()
+
+
+# =============================================================================
+# Change detection (for incremental execution)
+# =============================================================================
+
+
+def get_changed_pages() -> Tuple[List[str], List[str], List[str]]:
+    """Compare current page files on disk against backup.
+
+    Returns:
+        Tuple of (modified, added, deleted) filename lists.
+        - modified: file exists in both, content differs
+        - added: file on disk but not in backup (Claude created it)
+        - deleted: file in backup but not on disk (Claude deleted it)
+        Returns ([], [], []) if no backup exists.
+    """
+    if _pages_backup is None:
+        return [], [], []
+
+    pages_dir = get_pages_dir()
+    if not pages_dir or not pages_dir.exists():
+        return [], [], []
+
+    modified = []
+    added = []
+
+    current_files = {f.name for f in pages_dir.glob("*.py")}
+
+    for py_file in pages_dir.glob("*.py"):
+        name = py_file.name
+        if name in _pages_backup:
+            try:
+                current = py_file.read_text(encoding="utf-8")
+            except Exception:
+                continue
+            if current != _pages_backup[name]:
+                modified.append(name)
+        else:
+            added.append(name)
+
+    deleted = [name for name in _pages_backup if name not in current_files]
+
+    return modified, added, deleted
+
+
+def list_helper_pages() -> List[Path]:
+    """List underscore-prefixed helper files (shared code).
+
+    These are executed before the target page in incremental mode
+    to provide shared variables and functions.
+
+    Returns:
+        Sorted list of Path objects for _-prefixed .py files.
+    """
+    pages_dir = get_pages_dir()
+    if not pages_dir or not pages_dir.exists():
+        return []
+    return sorted(
+        (f for f in pages_dir.glob("*.py") if f.name.startswith("_")),
+        key=_page_sort_key,
+    )
+
+
+def page_sort_key_str(name: str) -> tuple:
+    """Sort key for filename strings (same logic as _page_sort_key for Paths)."""
+    return (0, name) if name.startswith("_") else (1, name)
 
 
 # =============================================================================

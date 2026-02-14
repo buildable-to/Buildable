@@ -3,6 +3,9 @@
 Code Executor - Safely executes AI-generated Python code in FreeCAD.
 """
 
+from pathlib import Path
+from typing import Dict, List, Optional, Set, Tuple
+
 import FreeCAD
 import FreeCADGui
 
@@ -25,6 +28,12 @@ BLOCKED_PATTERNS = [
 
 # Module-level storage for captured warnings
 _captured_warnings = []
+
+# Object-tracking state for incremental execution
+_page_object_map: Optional[Dict[str, Set[str]]] = None
+_tracked_doc_name: Optional[str] = None
+
+SKIP_TYPES = ("App::Origin", "App::Plane", "App::Line")
 
 
 class WarningCapture:
@@ -243,6 +252,210 @@ def execute(code: str) -> tuple:
 def get_last_warnings() -> list:
     """Get warnings captured from the last execution."""
     return _captured_warnings.copy()
+
+
+# =============================================================================
+# Tracked page execution (for incremental rebuild)
+# =============================================================================
+
+
+def execute_pages(page_paths: List[Path]) -> tuple:
+    """Execute page scripts individually with per-page object tracking.
+
+    Runs all pages in order using a shared namespace (so cross-page
+    variables work). Records which document objects each page created
+    in the module-level _page_object_map.
+
+    Args:
+        page_paths: Sorted list of page file paths to execute.
+
+    Returns:
+        Tuple of (success: bool, message: str, warnings: list)
+    """
+    global _page_object_map, _tracked_doc_name
+
+    if not page_paths:
+        return False, "No pages to execute", []
+
+    # Read all pages and do a single safety check on combined content
+    page_contents = {}
+    combined = []
+    for p in page_paths:
+        try:
+            content = p.read_text(encoding="utf-8")
+        except Exception as e:
+            return False, f"Failed to read {p.name}: {e}", []
+        page_contents[p.name] = content
+        combined.append(content)
+
+    safety_result = _safety_check("\n".join(combined))
+    if safety_result:
+        return False, safety_result, []
+
+    doc = FreeCAD.ActiveDocument
+    if not doc:
+        return False, "No active document", []
+
+    namespace = _build_namespace()
+
+    view_guard = _View3DGuard()
+    view_guard.install()
+
+    try:
+        page_map: Dict[str, Set[str]] = {}
+
+        with WarningCapture() as capture:
+            for p in page_paths:
+                before = {
+                    obj.Name for obj in doc.Objects if obj.TypeId not in SKIP_TYPES
+                }
+                exec(page_contents[p.name], namespace)
+                after = {
+                    obj.Name for obj in doc.Objects if obj.TypeId not in SKIP_TYPES
+                }
+                page_map[p.name] = after - before
+
+            doc.recompute()
+
+            try:
+                if FreeCADGui.ActiveDocument and FreeCADGui.ActiveDocument.ActiveView:
+                    FreeCADGui.ActiveDocument.ActiveView.fitAll()
+            except Exception:
+                pass
+
+        _page_object_map = page_map
+        _tracked_doc_name = doc.Name
+
+        total = sum(len(v) for v in page_map.values())
+        FreeCAD.Console.PrintMessage(
+            f"DrawingAssistant: Tracked {total} objects across {len(page_map)} pages\n"
+        )
+
+        return True, "Code executed successfully", capture.warnings
+
+    except SyntaxError as e:
+        return False, f"Syntax error at line {e.lineno}: {e.msg}", []
+    except NameError as e:
+        return False, f"Name error: {e}", []
+    except AttributeError as e:
+        return False, f"Attribute error: {e}", []
+    except Exception as e:
+        return False, f"Execution error: {type(e).__name__}: {e}", []
+    finally:
+        view_guard.uninstall()
+
+
+def execute_single_page(
+    page_path: Path, helper_paths: Optional[List[Path]] = None
+) -> Tuple[bool, str, list, Set[str]]:
+    """Execute a single page script for incremental rebuild.
+
+    Uses a fresh namespace populated only with FreeCAD modules and
+    optional helper files. Returns the set of new object names created.
+
+    Args:
+        page_path: Path to the page file to execute.
+        helper_paths: Paths to _-prefixed helper files to pre-execute
+                      (provides shared variables/functions).
+
+    Returns:
+        Tuple of (success, message, warnings, new_object_names).
+    """
+    try:
+        code = page_path.read_text(encoding="utf-8")
+    except Exception as e:
+        return False, f"Failed to read {page_path.name}: {e}", [], set()
+
+    safety_result = _safety_check(code)
+    if safety_result:
+        return False, safety_result, [], set()
+
+    doc = FreeCAD.ActiveDocument
+    if not doc:
+        return False, "No active document", [], set()
+
+    namespace = _build_namespace()
+
+    view_guard = _View3DGuard()
+    view_guard.install()
+
+    try:
+        with WarningCapture() as capture:
+            # Pre-execute helpers so shared variables are available
+            if helper_paths:
+                for hp in helper_paths:
+                    try:
+                        helper_code = hp.read_text(encoding="utf-8")
+                        exec(helper_code, namespace)
+                    except Exception:
+                        pass  # helpers failing is non-fatal
+
+            before = {
+                obj.Name for obj in doc.Objects if obj.TypeId not in SKIP_TYPES
+            }
+            exec(code, namespace)
+            after = {
+                obj.Name for obj in doc.Objects if obj.TypeId not in SKIP_TYPES
+            }
+            new_objects = after - before
+
+            doc.recompute()
+
+            try:
+                if FreeCADGui.ActiveDocument and FreeCADGui.ActiveDocument.ActiveView:
+                    FreeCADGui.ActiveDocument.ActiveView.fitAll()
+            except Exception:
+                pass
+
+        return True, "OK", capture.warnings, new_objects
+
+    except SyntaxError as e:
+        return False, f"Syntax error at line {e.lineno}: {e.msg}", [], set()
+    except NameError as e:
+        return False, f"Name error: {e}", [], set()
+    except AttributeError as e:
+        return False, f"Attribute error: {e}", [], set()
+    except Exception as e:
+        return False, f"Execution error: {type(e).__name__}: {e}", [], set()
+    finally:
+        view_guard.uninstall()
+
+
+# =============================================================================
+# Page object map accessors
+# =============================================================================
+
+
+def get_page_object_map() -> Optional[Dict[str, Set[str]]]:
+    """Return the current page-to-objects mapping, or None if not tracked."""
+    return _page_object_map
+
+
+def get_tracked_doc_name() -> Optional[str]:
+    """Return the document name the mapping was built for."""
+    return _tracked_doc_name
+
+
+def update_page_object_map(filename: str, objects: Set[str]):
+    """Replace the object set for a single page (after incremental re-execution)."""
+    global _page_object_map
+    if _page_object_map is None:
+        _page_object_map = {}
+    _page_object_map[filename] = objects
+
+
+def remove_from_page_object_map(filename: str):
+    """Remove a page's entry from the mapping (page was deleted)."""
+    global _page_object_map
+    if _page_object_map and filename in _page_object_map:
+        del _page_object_map[filename]
+
+
+def clear_page_object_map():
+    """Clear the mapping entirely (forces full rebuild next time)."""
+    global _page_object_map, _tracked_doc_name
+    _page_object_map = None
+    _tracked_doc_name = None
 
 
 def _clean_code(code: str) -> str:

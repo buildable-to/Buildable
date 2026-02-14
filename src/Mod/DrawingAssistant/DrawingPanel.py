@@ -118,6 +118,40 @@ def _close_techdraw_mdi_tabs():
         pass
 
 
+_SKIP_TYPES = ("App::Origin", "App::Plane", "App::Line")
+
+
+def _clear_objects(doc, object_names=None):
+    """Delete document objects in reverse order (SIGSEGV-safe).
+
+    Closes TechDraw MDI tabs first to prevent paint-on-freed-memory crashes,
+    then deletes objects in reverse document order (children before parents).
+
+    Args:
+        doc: FreeCAD document.
+        object_names: If provided, only delete these object names.
+                      If None, delete all (except Origin/Plane/Line).
+    """
+    _close_techdraw_mdi_tabs()
+    filter_set = set(object_names) if object_names else None
+    removed = 0
+    for obj in reversed(doc.Objects):
+        if obj.TypeId in _SKIP_TYPES:
+            continue
+        if filter_set is not None and obj.Name not in filter_set:
+            continue
+        try:
+            doc.removeObject(obj.Name)
+            removed += 1
+        except Exception:
+            pass
+    doc.recompute()
+    scope = f"{len(filter_set)} targeted" if filter_set else "all"
+    FreeCAD.Console.PrintMessage(
+        f"DrawingAssistant: Cleared {removed} objects ({scope})\n"
+    )
+
+
 def _find_techdraw_pages(doc) -> list:
     """Return all TechDraw::DrawPage objects in the document."""
     if not doc:
@@ -1216,34 +1250,15 @@ Read the relevant page file to understand what went wrong, then fix it."""
         # Check if this is a page edit (backup exists) vs old-style patch
         if SourceManager.has_backup():
             FreeCAD.Console.PrintMessage("DrawingAssistant: Executing edited pages\n")
-            source_content = SourceManager.read_all_pages()
 
             before_snapshot = SnapshotManager.capture_current_state()
 
-            # Clear all document objects before re-executing pages
-            # IMPORTANT: Reverse order to avoid SIGSEGV from dangling links
             doc = FreeCAD.ActiveDocument
             if doc:
-                # Close TechDraw MDI tabs to prevent SIGSEGV — their
-                # QGVPage widget would paint on freed DrawPage memory.
-                _close_techdraw_mdi_tabs()
+                success, message, warnings = self._execute_pages_smart(doc)
+            else:
+                success, message, warnings = False, "No active document", []
 
-                objects_to_remove = [
-                    obj.Name for obj in reversed(doc.Objects)
-                    if obj.TypeId not in ("App::Origin", "App::Plane", "App::Line")
-                ]
-                FreeCAD.Console.PrintMessage(
-                    f"DrawingAssistant: Clearing {len(objects_to_remove)} objects before re-execution\n"
-                )
-                for obj_name in objects_to_remove:
-                    try:
-                        doc.removeObject(obj_name)
-                    except Exception:
-                        pass
-                doc.recompute()
-
-            # Execute the new pages
-            success, message, warnings = CodeExecutor.execute(source_content)
             if warnings:
                 self._last_execution_warnings.extend(warnings)
 
@@ -1268,17 +1283,99 @@ Read the relevant page file to understand what went wrong, then fix it."""
                 SourceManager.restore_pages()
 
                 # Re-execute the restored pages to restore document objects
-                restored_source = SourceManager.read_all_pages()
-                if restored_source:
+                CodeExecutor.clear_page_object_map()
+                _clear_objects(doc)
+                restored_pages = SourceManager.list_pages()
+                if restored_pages:
                     FreeCAD.Console.PrintMessage(
                         "DrawingAssistant: Re-executing backup to restore objects\n"
                     )
-                    CodeExecutor.execute(restored_source)
+                    CodeExecutor.execute_pages(restored_pages)
 
                 self._last_execution_error = message
                 self._chat.add_error_message(f"Execution error: {message}")
         else:
             self._on_run_code(code, already_executed=True)
+
+    def _execute_pages_smart(self, doc) -> tuple:
+        """Execute pages with incremental rebuild when possible.
+
+        Checks whether only regular (non-helper) pages changed and a valid
+        object mapping exists.  If so, clears only the changed pages' objects
+        and re-executes only those pages.  Otherwise falls back to a full
+        rebuild that also builds the mapping for next time.
+
+        Returns:
+            Tuple of (success: bool, message: str, warnings: list)
+        """
+        modified, added, deleted = SourceManager.get_changed_pages()
+        page_map = CodeExecutor.get_page_object_map()
+        tracked_doc = CodeExecutor.get_tracked_doc_name()
+
+        all_changed = modified + added + deleted
+        can_incremental = (
+            page_map is not None
+            and all_changed
+            and not any(f.startswith("_") for f in all_changed)
+            and all(f in page_map for f in modified + deleted)
+            and tracked_doc == doc.Name
+        )
+
+        if can_incremental:
+            return self._execute_incremental(doc, modified, added, deleted, page_map)
+
+        reason = "first run" if page_map is None else "full rebuild required"
+        FreeCAD.Console.PrintMessage(
+            f"DrawingAssistant: Full rebuild ({reason})\n"
+        )
+        _clear_objects(doc)
+        page_paths = SourceManager.list_pages()
+        return CodeExecutor.execute_pages(page_paths)
+
+    def _execute_incremental(self, doc, modified, added, deleted, page_map) -> tuple:
+        """Execute only the changed pages, clearing their old objects first.
+
+        Falls back to full rebuild if any page fails to execute.
+        """
+        changed_desc = ", ".join(modified + added)
+        FreeCAD.Console.PrintMessage(
+            f"DrawingAssistant: Incremental execution for: {changed_desc}\n"
+        )
+
+        # Selective clear: only changed + deleted pages' objects
+        objects_to_clear = set()
+        for f in modified + deleted:
+            objects_to_clear.update(page_map.get(f, set()))
+
+        if objects_to_clear:
+            _clear_objects(doc, objects_to_clear)
+
+        # Selective execute: modified + added pages only
+        pages_dir = SourceManager.get_pages_dir()
+        helper_paths = SourceManager.list_helper_pages()
+
+        all_warnings = []
+        for filename in sorted(modified + added, key=SourceManager.page_sort_key_str):
+            page_path = pages_dir / filename
+            success, msg, warnings, new_objs = CodeExecutor.execute_single_page(
+                page_path, helper_paths
+            )
+            all_warnings.extend(warnings)
+            if not success:
+                FreeCAD.Console.PrintWarning(
+                    f"DrawingAssistant: Incremental failed for {filename}: {msg}\n"
+                    "  Falling back to full rebuild\n"
+                )
+                CodeExecutor.clear_page_object_map()
+                _clear_objects(doc)
+                page_paths = SourceManager.list_pages()
+                return CodeExecutor.execute_pages(page_paths)
+            CodeExecutor.update_page_object_map(filename, new_objs)
+
+        for filename in deleted:
+            CodeExecutor.remove_from_page_object_map(filename)
+
+        return True, "Incremental execution succeeded", all_warnings
 
     def _on_preview_cancelled(self):
         """Handle user cancellation of preview."""
@@ -1612,24 +1709,13 @@ If there are PROBLEMS, explain briefly what's wrong and edit the relevant page f
                 "DrawingAssistant: Self-review found issues, Claude edited pages. Re-executing...\n"
             )
 
-            source_content = SourceManager.read_all_pages()
-
             doc = FreeCAD.ActiveDocument
             if doc:
-                _close_techdraw_mdi_tabs()
+                _clear_objects(doc)
 
-                objects_to_remove = [
-                    obj.Name for obj in reversed(doc.Objects)
-                    if obj.TypeId not in ("App::Origin", "App::Plane", "App::Line")
-                ]
-                for obj_name in objects_to_remove:
-                    try:
-                        doc.removeObject(obj_name)
-                    except Exception:
-                        pass
-                doc.recompute()
-
-            success, message, warnings = CodeExecutor.execute(source_content)
+            # Full rebuild with tracking (self-review has no backup to diff)
+            page_paths = SourceManager.list_pages()
+            success, message, warnings = CodeExecutor.execute_pages(page_paths)
             if warnings:
                 self._last_execution_warnings.extend(warnings)
 
