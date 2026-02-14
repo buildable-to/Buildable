@@ -168,7 +168,12 @@ def _describe_object_lean(obj) -> str:
         if hasattr(obj, "Template") and obj.Template:
             template = obj.Template.Label
         view_count = len([o for o in obj.OutList if "DrawView" in o.TypeId])
-        parts.append(f"[template={template}, {view_count} views]")
+        try:
+            pw = obj.PageWidth
+            ph = obj.PageHeight
+            parts.append(f"[template={template}, {pw:.0f}x{ph:.0f}mm, {view_count} views]")
+        except Exception:
+            parts.append(f"[template={template}, {view_count} views]")
 
     # TechDraw template
     elif obj.TypeId == "TechDraw::DrawSVGTemplate":
@@ -176,6 +181,20 @@ def _describe_object_lean(obj) -> str:
             from pathlib import Path as P
 
             parts.append(f"[{P(obj.Template).name}]")
+
+    # TechDraw views (position + scale for layout)
+    elif "DrawView" in obj.TypeId and obj.TypeId.startswith("TechDraw::"):
+        try:
+            x = obj.X.Value if hasattr(obj.X, "Value") else float(obj.X)
+            y = obj.Y.Value if hasattr(obj.Y, "Value") else float(obj.Y)
+            scale = obj.Scale
+            parts.append(f"[pos=({x:.1f},{y:.1f}) scale={scale}]")
+        except (AttributeError, RuntimeError, TypeError):
+            pass
+        if hasattr(obj, "Source") and obj.Source:
+            src = obj.Source
+            if hasattr(src, "Label"):
+                parts.append(f"source={src.Label}")
 
     # Spreadsheet
     elif obj.TypeId == "Spreadsheet::Sheet":

@@ -183,9 +183,13 @@ Each file = one drawing group + its view on the sheet:
   view = doc.addObject("TechDraw::DrawViewDraft", "PlanView")
   view.Source = grp
   view.Scale = 0.01   # e.g. 1:100
-  view.X = 200; view.Y = 150
   page.addView(view)
+  view.X = 200; view.Y = 150  # MUST set AFTER addView (addView resets position)
   ```
+- IMPORTANT: `page.addView(view)` resets X/Y to page center. Always set view.X and view.Y AFTER calling addView.
+- Sheet sizes: A3 Landscape = 420×297mm, A4 Landscape = 297×210mm. Title block occupies ~40mm at bottom-right.
+- Rendered view size on sheet ≈ geometry_extent × Scale. E.g. 24000mm grid at 1:100 (Scale=0.01) = 240mm on sheet.
+- When adding a second view, check Document State for existing view positions and place the new view in unused space.
 
 ### Spreadsheet (tables, schedules)
 - Create: `sheet = doc.addObject("Spreadsheet::Sheet", "SheetName")`
