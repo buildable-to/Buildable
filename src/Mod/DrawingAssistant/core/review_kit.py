@@ -174,7 +174,7 @@ def _ensure_3d_view():
     """Activate the 3D view MDI tab and return the view.
 
     After TechDraw page creation, FreeCAD may auto-activate the TechDraw tab.
-    This finds and activates the 3D view subwindow.
+    Uses FreeCADGui.activateView() to switch back to the 3D view.
     """
     if not FreeCADGui.ActiveDocument:
         return None
@@ -183,15 +183,13 @@ def _ensure_3d_view():
     if hasattr(view, "saveImage"):
         return view
 
-    # Scan MDI subwindows for the 3D view
+    # Use the built-in API to activate (or create) the 3D view
     try:
-        mdi = FreeCADGui.getMainWindow().centralWidget()
-        for sub in mdi.subWindowList():
-            widget = sub.widget()
-            if hasattr(widget, "getSceneGraph"):
-                mdi.setActiveSubWindow(sub)
-                FreeCADGui.updateGui()
-                return FreeCADGui.ActiveDocument.ActiveView
+        FreeCADGui.activateView("Gui::View3DInventor", True)
+        FreeCADGui.updateGui()
+        view = FreeCADGui.ActiveDocument.ActiveView
+        if hasattr(view, "saveImage"):
+            return view
     except Exception:
         pass
 
