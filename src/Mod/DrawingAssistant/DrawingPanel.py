@@ -36,12 +36,9 @@ MAX_FIX_ATTEMPTS = 3
 def _svg_to_png(svg_path: str, png_path: str, width: int = 2000) -> bool:
     """Render an SVG to PNG, stripping FreeCAD's custom namespaces first.
 
-    TechDrawGui.exportPageAsSvg() includes the template (border, title
-    block) in the SVG, but Qt's QSvgRenderer chokes on custom namespace
-    attributes (freecad:editable, inkscape:label, etc.).  Stripping them
-    is safe — they are metadata, not rendering instructions.
-
-    No MDI tab is opened.  Everything is file I/O + in-memory rendering.
+    Qt's QSvgRenderer chokes on custom namespace attributes
+    (freecad:editable, inkscape:label, etc.).  Stripping them is safe —
+    they are metadata, not rendering instructions.
     """
     try:
         from PySide6 import QtSvg
@@ -1760,9 +1757,6 @@ If there are PROBLEMS, explain briefly what's wrong and edit the relevant page f
     def _capture_techdraw_screenshots(self, doc=None, screenshots_dir=None) -> list:
         """Export each TechDraw DrawPage as SVG then render to PNG.
 
-        Uses TechDrawGui.exportPageAsSvg() which includes the template
-        (border, title block).  Custom namespaces are stripped so
-        QSvgRenderer can handle the SVG.  No MDI tabs are opened.
         Returns list of PNG file paths.
         """
         results = []
@@ -1822,11 +1816,7 @@ If there are PROBLEMS, explain briefly what's wrong and edit the relevant page f
         return results
 
     def _capture_multi_angle_screenshots(self) -> list:
-        """Capture PNG screenshots of each TechDraw page.
-
-        Uses TechDrawGui.exportPageAsSvg() which includes the template
-        (border, title block).  No MDI tab interaction needed.
-        """
+        """Capture PNG screenshots of each TechDraw page."""
         if not FreeCADGui.ActiveDocument or not self._project_dir:
             return []
 
