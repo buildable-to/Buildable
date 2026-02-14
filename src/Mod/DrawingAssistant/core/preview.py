@@ -17,20 +17,23 @@ from typing import List, Dict, Optional, Tuple, Any
 
 
 def _build_sandbox_globals(doc):
-    """Build execution globals with all workbench modules for sandbox execution."""
+    """Build execution globals with 2D-focused workbench modules for sandbox execution."""
     exec_globals = {
         'FreeCAD': FreeCAD,
         'Part': Part,
         'doc': doc,
     }
 
-    for mod_name in [
-        "Draft", "Arch", "BIM", "Sketcher", "PartDesign",
-        "Mesh", "TechDraw", "Spreadsheet", "Surface",
-        "Points", "FEM", "CAM",
-    ]:
+    modules = {
+        "Draft": "Draft",
+        "TechDraw": "TechDraw",
+        "Spreadsheet": "Spreadsheet",
+        "DraftGeomUtils": "DraftGeomUtils",
+    }
+
+    for mod_name, import_name in modules.items():
         try:
-            exec_globals[mod_name] = __import__(mod_name)
+            exec_globals[mod_name] = __import__(import_name)
         except ImportError:
             pass
 
@@ -60,7 +63,7 @@ class SandboxReviewSession:
     """
     sandbox_doc_name: str = ""
     main_doc_name: str = ""
-    source_content: str = ""  # Current source.py being reviewed
+    source_content: str = ""  # Current pages source being reviewed
     iteration: int = 0
     max_iterations: int = 3
     preview_objects: List[str] = field(default_factory=list)  # Preview shapes in main doc
@@ -124,7 +127,7 @@ class PreviewManager:
         """
         main_doc = FreeCAD.ActiveDocument
         if not main_doc:
-            FreeCAD.Console.PrintWarning("AIAssistant: No active document for preview\n")
+            FreeCAD.Console.PrintWarning("DrawingAssistant: No active document for preview\n")
             return (False, "No active document")
 
         self._main_doc_name = main_doc.Name
@@ -159,13 +162,13 @@ class PreviewManager:
             matches = re.findall(pattern, code)
             if matches:
                 FreeCAD.Console.PrintMessage(
-                    f"AIAssistant: Pattern '{pattern}' matched: {matches}\n"
+                    f"DrawingAssistant: Pattern '{pattern}' matched: {matches}\n"
                 )
             targets.extend(matches)
         result = list(set(targets))  # dedupe
         if result:
             FreeCAD.Console.PrintMessage(
-                f"AIAssistant: Detected deletion targets: {result}\n"
+                f"DrawingAssistant: Detected deletion targets: {result}\n"
             )
         return result
 
@@ -210,17 +213,17 @@ class PreviewManager:
 
         if not found:
             msg = f"Objects not found: {', '.join(not_found)}"
-            FreeCAD.Console.PrintWarning(f"AIAssistant: {msg}\n")
+            FreeCAD.Console.PrintWarning(f"DrawingAssistant: {msg}\n")
             return (False, msg)
 
         FreeCAD.Console.PrintMessage(
-            f"AIAssistant: Created deletion preview for {len(found)} objects\n"
+            f"DrawingAssistant: Created deletion preview for {len(found)} objects\n"
         )
 
         if not_found:
             # Partial success - some objects found, some not
             FreeCAD.Console.PrintWarning(
-                f"AIAssistant: Objects not found: {', '.join(not_found)}\n"
+                f"DrawingAssistant: Objects not found: {', '.join(not_found)}\n"
             )
 
         return (True, "")
@@ -228,9 +231,9 @@ class PreviewManager:
     def _create_sandbox_preview(self, code: str) -> tuple:
         """Execute code in temp doc and show preview in main doc.
 
-        The sandbox first runs source.py to establish the baseline state,
-        then runs the LLM's new code on top. This ensures variables from
-        source.py (like `width`, `length`) are available.
+        The sandbox first runs all existing page scripts to establish the
+        baseline state, then runs the LLM's new code on top. This ensures
+        variables from earlier scripts are available.
 
         Only NEW objects (created by LLM code) are shown as green preview.
 
@@ -242,10 +245,10 @@ class PreviewManager:
         """
         # Create temporary document
         try:
-            self._temp_doc = FreeCAD.newDocument("__AIPreview__", hidden=True)
+            self._temp_doc = FreeCAD.newDocument("__DrawingPreview__", hidden=True)
         except TypeError:
             # Older FreeCAD versions may not support hidden parameter
-            self._temp_doc = FreeCAD.newDocument("__AIPreview__")
+            self._temp_doc = FreeCAD.newDocument("__DrawingPreview__")
 
         try:
             # Build execution environment for temp doc
@@ -255,25 +258,25 @@ class PreviewManager:
             FreeCAD.setActiveDocument(self._temp_doc.Name)
 
             try:
-                # STEP 1: Run source.py first to establish baseline
+                # STEP 1: Run all pages first to establish baseline
                 # This makes variables like `width`, `length` available to LLM code
-                from . import SourceManager
-                source_content = SourceManager.read_source()
+                from . import source as SourceManager
+                source_content = SourceManager.read_all_pages()
 
                 baseline_objects = set()
                 if source_content and source_content.strip():
                     FreeCAD.Console.PrintMessage(
-                        "AIAssistant: Running source.py in sandbox to establish baseline...\n"
+                        "DrawingAssistant: Running all pages in sandbox to establish baseline...\n"
                     )
                     exec(source_content, exec_globals)
                     self._temp_doc.recompute()
-                    # Record baseline objects (from source.py)
+                    # Record baseline objects (from existing pages)
                     baseline_objects = set(
                         obj.Name for obj in self._temp_doc.Objects
                         if obj.TypeId not in ("App::Origin", "App::Plane", "App::Line")
                     )
                     FreeCAD.Console.PrintMessage(
-                        f"AIAssistant: Baseline has {len(baseline_objects)} objects\n"
+                        f"DrawingAssistant: Baseline has {len(baseline_objects)} objects\n"
                     )
 
                 # STEP 2: Run LLM's new code on top of baseline
@@ -307,7 +310,7 @@ class PreviewManager:
 
             if validation_errors:
                 error_msg = "Geometry validation failed:\n" + "\n".join(validation_errors)
-                FreeCAD.Console.PrintError(f"AIAssistant: {error_msg}\n")
+                FreeCAD.Console.PrintError(f"DrawingAssistant: {error_msg}\n")
                 self.clear_preview()
                 return (False, error_msg)
 
@@ -327,7 +330,7 @@ class PreviewManager:
                 if obj.TypeId in ("App::Origin", "App::Plane", "App::Line"):
                     continue
 
-                # Only preview objects created by LLM code, not baseline from source.py
+                # Only preview objects created by LLM code, not baseline from pages
                 if obj.Name not in new_objects:
                     continue
 
@@ -344,7 +347,7 @@ class PreviewManager:
             except Exception:
                 pass
 
-            FreeCAD.Console.PrintMessage(f"AIAssistant: Created preview with {preview_count} objects\n")
+            FreeCAD.Console.PrintMessage(f"DrawingAssistant: Created preview with {preview_count} objects\n")
 
             if preview_count > 0:
                 return (True, "")
@@ -354,7 +357,7 @@ class PreviewManager:
         except Exception as e:
             import traceback
             error_msg = f"{type(e).__name__}: {str(e)}\n{traceback.format_exc()}"
-            FreeCAD.Console.PrintError(f"AIAssistant: Preview failed: {e}\n")
+            FreeCAD.Console.PrintError(f"DrawingAssistant: Preview failed: {e}\n")
             self.clear_preview()
             return (False, error_msg)
 
@@ -382,7 +385,7 @@ class PreviewManager:
             self._preview_objects.append(preview_name)
 
         except Exception as e:
-            FreeCAD.Console.PrintWarning(f"AIAssistant: Failed to add preview for {source_obj.Name}: {e}\n")
+            FreeCAD.Console.PrintWarning(f"DrawingAssistant: Failed to add preview for {source_obj.Name}: {e}\n")
 
     def clear_preview(self):
         """Remove all preview objects and restore deletion highlights."""
@@ -396,7 +399,7 @@ class PreviewManager:
                             doc.removeObject(name)
                     doc.recompute()
             except Exception as e:
-                FreeCAD.Console.PrintWarning(f"AIAssistant: Error clearing preview: {e}\n")
+                FreeCAD.Console.PrintWarning(f"DrawingAssistant: Error clearing preview: {e}\n")
 
         self._preview_objects = []
 
@@ -451,7 +454,7 @@ class PreviewManager:
         """Cancel preview - clear preview without executing."""
         self.clear_preview()
         self._pending_code = ""
-        FreeCAD.Console.PrintMessage("AIAssistant: Preview cancelled\n")
+        FreeCAD.Console.PrintMessage("DrawingAssistant: Preview cancelled\n")
 
     def get_preview_summary(self) -> List[Dict]:
         """Get list of objects that will be created or deleted.
@@ -618,25 +621,25 @@ class PreviewManager:
         return True
 
     def create_diff_preview(self, old_source: str, new_source: str) -> tuple:
-        """Create preview showing diff between old and new source.py.
+        """Create preview showing diff between old and new page sources.
 
         Executes both versions in sandbox, compares resulting objects:
         - Objects in OLD but not NEW = deleted (red highlight in main doc)
         - Objects in NEW but not OLD = created (green preview)
         - Objects in BOTH but with different geometry = modified (red old + green new)
 
-        Used for direct source editing flow where Claude edits source.py.
+        Used for direct source editing flow where Claude edits page files.
 
         Args:
-            old_source: Previous source.py content (from backup)
-            new_source: New source.py content (after Claude's edit)
+            old_source: Previous combined page content (from backup)
+            new_source: New combined page content (after Claude's edit)
 
         Returns:
             Tuple of (success: bool, error_message: str)
         """
         main_doc = FreeCAD.ActiveDocument
         if not main_doc:
-            FreeCAD.Console.PrintWarning("AIAssistant: No active document for preview\n")
+            FreeCAD.Console.PrintWarning("DrawingAssistant: No active document for preview\n")
             return (False, "No active document")
 
         self._main_doc_name = main_doc.Name
@@ -648,31 +651,31 @@ class PreviewManager:
         try:
             # Execute OLD source in sandbox
             FreeCAD.Console.PrintMessage(
-                "AIAssistant: Executing old source.py in sandbox...\n"
+                "DrawingAssistant: Executing old pages in sandbox...\n"
             )
             old_objects, old_shapes, old_error, old_warnings = self._execute_source_in_sandbox(old_source)
             if old_error:
                 # Old source failed - this shouldn't happen normally
                 FreeCAD.Console.PrintWarning(
-                    f"AIAssistant: Old source.py failed (unusual): {old_error[:100]}...\n"
+                    f"DrawingAssistant: Old pages failed (unusual): {old_error[:100]}...\n"
                 )
             FreeCAD.Console.PrintMessage(
-                f"AIAssistant: Old source objects: {sorted(old_objects)}\n"
+                f"DrawingAssistant: Old source objects: {sorted(old_objects)}\n"
             )
 
             # Execute NEW source in sandbox
             FreeCAD.Console.PrintMessage(
-                "AIAssistant: Executing new source.py in sandbox...\n"
+                "DrawingAssistant: Executing new pages in sandbox...\n"
             )
             new_objects, new_shapes, new_error, new_warnings = self._execute_source_in_sandbox(new_source)
             if new_error:
-                # New source failed - return error so AIPanel can request fix from Claude
+                # New source failed - return error so panel can request fix from Claude
                 FreeCAD.Console.PrintError(
-                    f"AIAssistant: New source.py execution failed\n"
+                    "DrawingAssistant: New pages execution failed\n"
                 )
                 return (False, f"EXECUTION_ERROR:{new_error}")
             FreeCAD.Console.PrintMessage(
-                f"AIAssistant: New source objects: {sorted(new_objects)}\n"
+                f"DrawingAssistant: New source objects: {sorted(new_objects)}\n"
             )
 
             # Store warnings from new source execution for agentic learning
@@ -696,7 +699,7 @@ class PreviewManager:
             self._modified_names = list(modified_names)
 
             FreeCAD.Console.PrintMessage(
-                f"AIAssistant: Diff - {len(deleted_names)} deleted ({list(deleted_names)}), "
+                f"DrawingAssistant: Diff - {len(deleted_names)} deleted ({list(deleted_names)}), "
                 f"{len(created_names)} created ({list(created_names)}), "
                 f"{len(modified_names)} modified ({list(modified_names)})\n"
             )
@@ -769,17 +772,17 @@ class PreviewManager:
             total_changes = len(deleted_names) + len(created_names) + len(modified_names)
             if total_changes > 0:
                 FreeCAD.Console.PrintMessage(
-                    f"AIAssistant: Created diff preview ({len(deleted_names)} deleted, "
+                    f"DrawingAssistant: Created diff preview ({len(deleted_names)} deleted, "
                     f"{len(created_names)} created, {len(modified_names)} modified)\n"
                 )
                 return (True, "")
             else:
-                return (False, "No changes detected between old and new source.py")
+                return (False, "No changes detected between old and new pages")
 
         except Exception as e:
             import traceback
             error_msg = f"{type(e).__name__}: {str(e)}\n{traceback.format_exc()}"
-            FreeCAD.Console.PrintError(f"AIAssistant: Diff preview failed: {e}\n")
+            FreeCAD.Console.PrintError(f"DrawingAssistant: Diff preview failed: {e}\n")
             self.clear_preview()
             return (False, error_msg)
 
@@ -799,13 +802,18 @@ class PreviewManager:
 
         temp_doc = None
         try:
-            temp_doc = FreeCAD.newDocument("__AIDiffSandbox__", hidden=True)
+            temp_doc = FreeCAD.newDocument("__DrawingDiffSandbox__", hidden=True)
         except TypeError:
-            temp_doc = FreeCAD.newDocument("__AIDiffSandbox__")
+            temp_doc = FreeCAD.newDocument("__DrawingDiffSandbox__")
 
         try:
             # Build execution environment
             exec_globals = _build_sandbox_globals(temp_doc)
+
+            # Guard against TechDraw tab stealing 3D view focus (same as executor)
+            from .executor import _View3DGuard
+            view_guard = _View3DGuard()
+            view_guard.install()
 
             # Execute source with warning capture
             FreeCAD.setActiveDocument(temp_doc.Name)
@@ -818,11 +826,12 @@ class PreviewManager:
             except Exception as exec_error:
                 error_msg = f"{type(exec_error).__name__}: {exec_error}\n{traceback.format_exc()}"
                 FreeCAD.Console.PrintError(
-                    f"AIAssistant: Sandbox exec failed: {exec_error}\n"
+                    f"DrawingAssistant: Sandbox exec failed: {exec_error}\n"
                 )
                 # Return empty set with error message
                 return set(), {}, error_msg, []
             finally:
+                view_guard.uninstall()
                 if self._main_doc_name and FreeCAD.getDocument(self._main_doc_name):
                     FreeCAD.setActiveDocument(self._main_doc_name)
 
@@ -858,7 +867,7 @@ class PreviewManager:
 
             if validation_errors:
                 error_msg = "Geometry validation failed:\n" + "\n".join(validation_errors)
-                FreeCAD.Console.PrintError(f"AIAssistant: {error_msg}\n")
+                FreeCAD.Console.PrintError(f"DrawingAssistant: {error_msg}\n")
                 return set(), {}, error_msg, warnings
 
             # Collect object names and shapes
@@ -906,7 +915,7 @@ class PreviewManager:
 
         except Exception as e:
             FreeCAD.Console.PrintWarning(
-                f"AIAssistant: Failed to add preview for {name}: {e}\n"
+                f"DrawingAssistant: Failed to add preview for {name}: {e}\n"
             )
 
     def has_preview(self) -> bool:
@@ -940,7 +949,7 @@ class PreviewManager:
         so Claude can iterate and fix issues before the user sees the preview.
 
         Args:
-            new_source: The new source.py content to execute
+            new_source: The new combined page content to execute
 
         Returns:
             Tuple of (success, error_message, session)
@@ -968,13 +977,18 @@ class PreviewManager:
         # Create sandbox document (NOT hidden - we need GUI view for screenshots)
         # The sandbox will be visible briefly during self-review, but that's necessary
         # for capturing screenshots that Claude can review
-        sandbox_doc = FreeCAD.newDocument("__AISelfReviewSandbox__")
+        sandbox_doc = FreeCAD.newDocument("__DrawingSelfReviewSandbox__")
 
         session.sandbox_doc_name = sandbox_doc.Name
 
         # Execute source in sandbox
         try:
             exec_globals = _build_sandbox_globals(sandbox_doc)
+
+            # Guard against TechDraw tab stealing 3D view focus (same as executor)
+            from .executor import _View3DGuard
+            view_guard = _View3DGuard()
+            view_guard.install()
 
             # Execute with warning capture
             FreeCAD.setActiveDocument(sandbox_doc.Name)
@@ -985,10 +999,11 @@ class PreviewManager:
                 self._last_sandbox_warnings = capture.warnings
             except Exception as exec_error:
                 error_msg = f"EXECUTION_ERROR:{type(exec_error).__name__}: {exec_error}\n{traceback.format_exc()}"
-                FreeCAD.Console.PrintError(f"AIAssistant: Sandbox exec failed: {exec_error}\n")
+                FreeCAD.Console.PrintError(f"DrawingAssistant: Sandbox exec failed: {exec_error}\n")
                 self.close_sandbox(session)
                 return (False, error_msg, None)
             finally:
+                view_guard.uninstall()
                 if self._main_doc_name and FreeCAD.getDocument(self._main_doc_name):
                     FreeCAD.setActiveDocument(self._main_doc_name)
 
@@ -1014,7 +1029,7 @@ class PreviewManager:
 
             if validation_errors:
                 error_msg = f"EXECUTION_ERROR:Geometry validation failed:\n" + "\n".join(validation_errors)
-                FreeCAD.Console.PrintError(f"AIAssistant: {error_msg}\n")
+                FreeCAD.Console.PrintError(f"DrawingAssistant: {error_msg}\n")
                 self.close_sandbox(session)
                 return (False, error_msg, None)
 
@@ -1029,14 +1044,14 @@ class PreviewManager:
                     }
 
             FreeCAD.Console.PrintMessage(
-                f"AIAssistant: Sandbox created with {len(session.object_shapes)} objects\n"
+                f"DrawingAssistant: Sandbox created with {len(session.object_shapes)} objects\n"
             )
 
             return (True, "", session)
 
         except Exception as e:
             error_msg = f"{type(e).__name__}: {e}\n{traceback.format_exc()}"
-            FreeCAD.Console.PrintError(f"AIAssistant: Failed to create sandbox: {e}\n")
+            FreeCAD.Console.PrintError(f"DrawingAssistant: Failed to create sandbox: {e}\n")
             self.close_sandbox(session)
             return (False, error_msg, None)
 
@@ -1047,7 +1062,7 @@ class PreviewManager:
 
         Args:
             session: Active sandbox session
-            new_source: Updated source.py content
+            new_source: Updated combined page content
 
         Returns:
             Tuple of (success, error_message)
@@ -1074,6 +1089,10 @@ class PreviewManager:
             except Exception:
                 pass
 
+        # Flush document state after clearing — TechDraw keeps internal
+        # references that cause 'NoneType' errors if not cleaned up
+        sandbox_doc.recompute()
+
         session.object_shapes.clear()
         session.source_content = new_source
         session.iteration += 1
@@ -1081,6 +1100,11 @@ class PreviewManager:
         # Re-execute
         try:
             exec_globals = _build_sandbox_globals(sandbox_doc)
+
+            # Guard against TechDraw tab stealing 3D view focus (same as executor)
+            from .executor import _View3DGuard
+            view_guard = _View3DGuard()
+            view_guard.install()
 
             FreeCAD.setActiveDocument(sandbox_doc.Name)
             try:
@@ -1092,6 +1116,7 @@ class PreviewManager:
                 error_msg = f"EXECUTION_ERROR:{type(exec_error).__name__}: {exec_error}\n{traceback.format_exc()}"
                 return (False, error_msg)
             finally:
+                view_guard.uninstall()
                 if self._main_doc_name and FreeCAD.getDocument(self._main_doc_name):
                     FreeCAD.setActiveDocument(self._main_doc_name)
 
@@ -1117,7 +1142,7 @@ class PreviewManager:
 
             if validation_errors:
                 error_msg = f"EXECUTION_ERROR:Geometry validation failed:\n" + "\n".join(validation_errors)
-                FreeCAD.Console.PrintError(f"AIAssistant: {error_msg}\n")
+                FreeCAD.Console.PrintError(f"DrawingAssistant: {error_msg}\n")
                 return (False, error_msg)
 
             # Collect shapes
@@ -1131,7 +1156,7 @@ class PreviewManager:
                     }
 
             FreeCAD.Console.PrintMessage(
-                f"AIAssistant: Re-executed sandbox (iteration {session.iteration}), "
+                f"DrawingAssistant: Re-executed sandbox (iteration {session.iteration}), "
                 f"{len(session.object_shapes)} objects\n"
             )
 
@@ -1185,7 +1210,7 @@ class PreviewManager:
                 preview_count += 1
             except Exception as e:
                 FreeCAD.Console.PrintWarning(
-                    f"AIAssistant: Failed to create preview for {name}: {e}\n"
+                    f"DrawingAssistant: Failed to create preview for {name}: {e}\n"
                 )
 
         main_doc.recompute()
@@ -1198,10 +1223,40 @@ class PreviewManager:
             pass
 
         FreeCAD.Console.PrintMessage(
-            f"AIAssistant: Created preview with {preview_count} objects from sandbox\n"
+            f"DrawingAssistant: Created preview with {preview_count} objects from sandbox\n"
         )
 
         return preview_count > 0
+
+    def get_sandbox_summary(self, session: SandboxReviewSession) -> List[Dict]:
+        """Get object summary directly from sandbox doc.
+
+        Used when object_shapes is empty (e.g. TechDraw/Draft groups with no
+        Part shapes) but the sandbox execution succeeded.
+        """
+        sandbox_doc = FreeCAD.getDocument(session.sandbox_doc_name)
+        if not sandbox_doc:
+            return []
+        result = []
+        for obj in sandbox_doc.Objects:
+            if obj.TypeId in ("App::Origin", "App::Plane", "App::Line"):
+                continue
+            type_name = obj.TypeId.split("::")[-1] if "::" in obj.TypeId else obj.TypeId
+            dimensions = {}
+            if hasattr(obj, 'Shape') and obj.Shape and not obj.Shape.isNull():
+                bbox = obj.Shape.BoundBox
+                dimensions = {
+                    "width": round(bbox.XLength, 2),
+                    "depth": round(bbox.YLength, 2),
+                    "height": round(bbox.ZLength, 2),
+                }
+            result.append({
+                "name": obj.Name,
+                "label": obj.Label,
+                "type": type_name,
+                "dimensions": dimensions,
+            })
+        return result
 
     def close_sandbox(self, session: Optional[SandboxReviewSession]) -> None:
         """Close sandbox document and clean up session.
@@ -1220,11 +1275,11 @@ class PreviewManager:
                 if sandbox_doc:
                     FreeCAD.closeDocument(session.sandbox_doc_name)
                     FreeCAD.Console.PrintMessage(
-                        f"AIAssistant: Closed sandbox {session.sandbox_doc_name}\n"
+                        f"DrawingAssistant: Closed sandbox {session.sandbox_doc_name}\n"
                     )
             except Exception as e:
                 FreeCAD.Console.PrintWarning(
-                    f"AIAssistant: Failed to close sandbox: {e}\n"
+                    f"DrawingAssistant: Failed to close sandbox: {e}\n"
                 )
 
         session.object_shapes.clear()

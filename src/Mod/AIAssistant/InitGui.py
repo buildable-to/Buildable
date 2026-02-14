@@ -54,8 +54,8 @@ class AIAssistantCommand:
 
     def GetResources(self):
         return {
-            "MenuText": "AI Assistant",
-            "ToolTip": "Toggle AI Assistant panel",
+            "MenuText": "3D Assistant",
+            "ToolTip": "Toggle 3D Assistant panel",
             "Accel": "Ctrl+Shift+A",
         }
 
@@ -84,7 +84,7 @@ def _setup_menu():
                 if "View" in action.text():
                     menu = action.menu()
                     if menu:
-                        act = QtGui.QAction("AI Assistant", mw)
+                        act = QtGui.QAction("3D Assistant", mw)
                         act.setShortcut("Ctrl+Shift+A")
                         # Use the registered command instead of direct function reference
                         act.triggered.connect(lambda: FreeCADGui.runCommand("Std_AIAssistant"))
@@ -104,10 +104,10 @@ def _setup_document_observer():
     global _observer
 
     def _show_panel_safe():
-        """Show panel using module import to avoid scope issues."""
+        """Show chooser or last-used mode on document open."""
         try:
             import AIAssistant
-            AIAssistant.show()
+            AIAssistant.show_chooser()
         except Exception as e:
             FreeCAD.Console.PrintWarning(f"AIAssistant: Failed to show panel: {e}\n")
 
@@ -116,12 +116,17 @@ def _setup_document_observer():
 
         def slotCreatedDocument(self, doc):
             """Called when a new document is created."""
+            # Skip internal/sandbox documents
+            if doc.Name.startswith("__"):
+                return
             FreeCAD.Console.PrintMessage(f">>> AIAssistant: Document created: {doc.Name}\n")
             from PySide6 import QtCore
             QtCore.QTimer.singleShot(100, _show_panel_safe)
 
         def slotOpenedDocument(self, doc):
             """Called when an existing document is opened."""
+            if doc.Name.startswith("__"):
+                return
             FreeCAD.Console.PrintMessage(f">>> AIAssistant: Document opened: {doc.Name}\n")
             from PySide6 import QtCore
             QtCore.QTimer.singleShot(100, _show_panel_safe)

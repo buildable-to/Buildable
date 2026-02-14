@@ -1,9 +1,10 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 """
-AI Assistant Panel - Main dock widget for natural language CAD modeling.
-Features a modern Cursor-like chat interface.
+Drawing Assistant Panel - Main dock widget for 2D structural drawing with AI.
+Features a modern Cursor-like chat interface for Draft + TechDraw + Spreadsheet.
 """
 
+import re
 import subprocess
 from datetime import datetime
 
@@ -11,7 +12,7 @@ import FreeCAD
 import FreeCADGui
 from PySide6 import QtWidgets, QtCore, QtGui
 
-FreeCAD.Console.PrintMessage("AIAssistant: AIPanel.py loaded (v3 modern design)\n")
+FreeCAD.Console.PrintMessage("DrawingAssistant: DrawingPanel.py loaded\n")
 
 from pathlib import Path
 
@@ -23,6 +24,7 @@ from .core import snapshot as SnapshotManager
 from .core import changes as ChangeDetector
 from .core import source as SourceManager
 from .core.preview import PreviewManager, SandboxReviewSession
+from .core.review_kit import ReviewKit, generate_review_kit, format_review_prompt
 from .persistence import activity as ActivityLogger
 from .persistence.session import SessionManager
 from .widgets.chat import ChatWidget
@@ -32,6 +34,61 @@ from .widgets.context_selection import ContextSelectionWidget
 # Maximum attempts to auto-fix code that fails preview
 MAX_FIX_ATTEMPTS = 3
 
+def _close_techdraw_mdi_tabs():
+    """Close TechDraw MDI tabs before object deletion.
+
+    TechDraw's QGVPage::drawBackground() accesses the DrawPage C++ object.
+    If the DrawPage is freed while QGVPage still exists, expose events can
+    trigger a paint on freed memory (SIGSEGV).  setUpdatesEnabled(False)
+    does NOT prevent this — expose events bypass it.
+
+    Closing the MDI subwindow destroys QGVPage entirely.  FreeCAD recreates
+    TechDraw tabs automatically when new DrawPages are created and
+    doc.recompute() runs.
+    """
+    try:
+        mdi = FreeCADGui.getMainWindow().centralWidget()
+        for sub in list(mdi.subWindowList()):
+            widget = sub.widget()
+            if widget and "MDIViewPage" in widget.metaObject().className():
+                sub.close()
+    except Exception:
+        pass
+
+
+_SKIP_TYPES = ("App::Origin", "App::Plane", "App::Line")
+
+
+def _clear_objects(doc, object_names=None):
+    """Delete document objects in reverse order (SIGSEGV-safe).
+
+    Closes TechDraw MDI tabs first to prevent paint-on-freed-memory crashes,
+    then deletes objects in reverse document order (children before parents).
+
+    Args:
+        doc: FreeCAD document.
+        object_names: If provided, only delete these object names.
+                      If None, delete all (except Origin/Plane/Line).
+    """
+    _close_techdraw_mdi_tabs()
+    filter_set = set(object_names) if object_names else None
+    removed = 0
+    for obj in reversed(doc.Objects):
+        if obj.TypeId in _SKIP_TYPES:
+            continue
+        if filter_set is not None and obj.Name not in filter_set:
+            continue
+        try:
+            doc.removeObject(obj.Name)
+            removed += 1
+        except Exception:
+            pass
+    doc.recompute()
+    scope = f"{len(filter_set)} targeted" if filter_set else "all"
+    FreeCAD.Console.PrintMessage(
+        f"DrawingAssistant: Cleared {removed} objects ({scope})\n"
+    )
+
 
 class LLMWorker(QtCore.QThread):
     """Background worker for LLM API calls."""
@@ -39,14 +96,13 @@ class LLMWorker(QtCore.QThread):
     error = QtCore.Signal(str)
     tool_call = QtCore.Signal(str, dict)  # For progress indicator updates
 
-    def __init__(self, llm, user_input, context, conversation, screenshot=None,
+    def __init__(self, llm, user_input, context, conversation,
                  multi_angle_screenshots=None):
         super().__init__()
         self.llm = llm
         self.user_input = user_input
         self.context = context
         self.conversation = conversation
-        self.screenshot = screenshot
         self.multi_angle_screenshots = multi_angle_screenshots
 
     def run(self):
@@ -57,8 +113,8 @@ class LLMWorker(QtCore.QThread):
             self.llm.on_tool_call = on_tool_call
 
             response = self.llm.chat(
-                self.user_input, self.context, self.conversation, self.screenshot,
-                self.multi_angle_screenshots
+                self.user_input, self.context, self.conversation,
+                multi_angle_screenshots=self.multi_angle_screenshots
             )
             self.finished.emit(response)
         except Exception as e:
@@ -68,12 +124,12 @@ class LLMWorker(QtCore.QThread):
             self.llm.on_tool_call = None
 
 
-class AIAssistantDockWidget(QtWidgets.QDockWidget):
-    """Main AI Assistant dock widget with modern chat interface."""
+class DrawingAssistantDockWidget(QtWidgets.QDockWidget):
+    """Main Drawing Assistant dock widget with modern chat interface."""
 
     def __init__(self, parent=None):
-        super().__init__("3D Assistant", parent)
-        self.setObjectName("AIAssistantPanel")
+        super().__init__("Drawing Assistant", parent)
+        self.setObjectName("DrawingAssistantPanel")
         self.setAllowedAreas(
             QtCore.Qt.LeftDockWidgetArea | QtCore.Qt.RightDockWidgetArea
         )
@@ -82,7 +138,7 @@ class AIAssistantDockWidget(QtWidgets.QDockWidget):
         self._project_dir = self._get_project_dir()
         self.llm = ClaudeCodeBackend.ClaudeCodeBackend(self._project_dir)
         FreeCAD.Console.PrintMessage(
-            f"AIAssistant: Using Claude Code backend (project: {self._project_dir})\n"
+            f"DrawingAssistant: Using Claude Code backend (project: {self._project_dir})\n"
         )
 
         self.worker = None
@@ -90,31 +146,30 @@ class AIAssistantDockWidget(QtWidgets.QDockWidget):
         self._plan_worker = None  # Worker for plan mode phase 2
         self.pending_input = None
         self._last_code = ""
-        self._last_screenshot = None  # Base64 PNG of last viewport capture
         self._last_execution_warnings = []  # Warnings from last code execution
         self._last_execution_error = None  # Error message from last failed execution
-        self._last_multi_angle_screenshots = []  # Paths to multi-angle screenshots
+        self._last_review_kit: ReviewKit = None  # On-demand review files
 
         # Self-review state
-        self._self_review_worker = None  # Worker for self-review requests
-        self._self_review_attempt = 0  # Current self-review attempt
-        self._self_review_change_set = None  # Pending change set to show after review
-        self._max_self_review_attempts = 2  # Max auto-fix iterations in self-review
+        self._review_worker = None
+        self._review_attempt = 0
+        self._review_change_set = None
+        self._max_review_attempts = 2
 
-        # Sandbox self-review state (new flow: self-review before user approval)
+        # Sandbox self-review state
         self._sandbox_session: SandboxReviewSession = None
-        self._sandbox_review_worker = None  # Worker for sandbox self-review
-        self._sandbox_review_response = ""  # Last response from sandbox self-review
+        self._sandbox_review_worker = None
+        self._sandbox_review_response = ""
 
         # Plan mode state
-        self._pending_plan = None  # Approved plan text for code generation
-        self._plan_user_request = None  # Original user request for plan
-        self._plan_mode_request = False  # True if current request is for plan (phase 1)
+        self._pending_plan = None
+        self._plan_user_request = None
+        self._plan_mode_request = False
 
         # Session manager for persisting conversations
         self.session_manager = SessionManager()
 
-        # Preview manager for 3D previews before execution
+        # Preview manager
         self._preview_manager = PreviewManager()
 
         # Start console observer to capture errors for AI context
@@ -123,8 +178,8 @@ class AIAssistantDockWidget(QtWidgets.QDockWidget):
         self._setup_ui()
         self._connect_signals()
 
-        # Ensure source file exists for saved documents
-        self._ensure_source_file()
+        # Ensure pages/ directory exists for saved documents
+        self._ensure_pages_dir()
 
         # Ensure CLAUDE.md exists for Claude Code backend
         self._ensure_claude_md()
@@ -163,9 +218,9 @@ class AIAssistantDockWidget(QtWidgets.QDockWidget):
         title_area_layout.setContentsMargins(0, 6, 0, 6)
         title_area_layout.setSpacing(2)
 
-        from .widgets.mode_switcher import ModeSegmentedControl
+        from AIAssistant.widgets.mode_switcher import ModeSegmentedControl
         self._mode_switcher = ModeSegmentedControl(
-            active_mode="3d", theme_module=Theme
+            active_mode="drawing", theme_module=Theme
         )
         self._mode_switcher.modeChanged.connect(self._on_mode_changed)
         title_area_layout.addWidget(self._mode_switcher)
@@ -321,8 +376,6 @@ class AIAssistantDockWidget(QtWidgets.QDockWidget):
                     QtCore.QTimer.singleShot(200, self._panel._on_theme_param_changed)
 
         self._theme_observer = _ThemeObserver(self)
-        # Store the param group on self to prevent the Python wrapper from
-        # being garbage collected, which would destroy the C++ observer link
         self._theme_param_grp = FreeCAD.ParamGet(
             "User parameter:BaseApp/Preferences/MainWindow"
         )
@@ -330,7 +383,7 @@ class AIAssistantDockWidget(QtWidgets.QDockWidget):
             self._theme_param_grp.AttachManager(self._theme_observer)
         except Exception as e:
             FreeCAD.Console.PrintWarning(
-                f"AIAssistant: Could not attach theme observer: {e}\n"
+                f"DrawingAssistant: Could not attach theme observer: {e}\n"
             )
 
     def _on_theme_param_changed(self):
@@ -379,7 +432,7 @@ class AIAssistantDockWidget(QtWidgets.QDockWidget):
                     model.add_message(msg.text, msg.role, changes=msg.changes)
             except Exception as e:
                 FreeCAD.Console.PrintWarning(
-                    f"AIAssistant: Could not restore messages after theme change: {e}\n"
+                    f"DrawingAssistant: Could not restore messages after theme change: {e}\n"
                 )
 
     def _connect_signals(self):
@@ -445,7 +498,6 @@ class AIAssistantDockWidget(QtWidgets.QDockWidget):
                     label = "● " + label
                 action = menu.addAction(label)
                 action.setData(session["session_id"])
-                # Use default argument to capture session value
                 action.triggered.connect(
                     lambda checked, sid=session["session_id"]: self._on_load_session(sid)
                 )
@@ -500,16 +552,15 @@ class AIAssistantDockWidget(QtWidgets.QDockWidget):
                 self.session_manager.save_message
             )
         except RuntimeError:
-            pass  # Already disconnected
+            pass
 
         show_debug = self.debug_action.isChecked()
-        FreeCAD.Console.PrintMessage(f"AIAssistant: Loading session {session_id}, {len(messages)} messages, show_debug={show_debug}\n")
+        FreeCAD.Console.PrintMessage(
+            f"DrawingAssistant: Loading session {session_id}, {len(messages)} messages, show_debug={show_debug}\n"
+        )
 
         for i, msg in enumerate(messages):
-            has_debug = "debug_info" in msg and msg["debug_info"] is not None
-            FreeCAD.Console.PrintMessage(f"AIAssistant: Loading msg {i}, role={msg.get('role')}, has_debug_info={has_debug}\n")
             self._chat.add_message_from_dict(msg, show_debug=show_debug)
-            # Process events every 5 messages to keep UI responsive
             if i % 5 == 0:
                 QtCore.QCoreApplication.processEvents()
 
@@ -520,9 +571,6 @@ class AIAssistantDockWidget(QtWidgets.QDockWidget):
 
     def _update_session_title(self, session_id: str, messages: list):
         """Update the session title in the header."""
-        FreeCAD.Console.PrintMessage(f"AIAssistant: _update_session_title called with session_id={session_id}\n")
-
-        # Get session date from ID
         try:
             session_date = datetime.strptime(session_id, "%Y-%m-%d_%H-%M-%S")
             now = datetime.now()
@@ -534,7 +582,6 @@ class AIAssistantDockWidget(QtWidgets.QDockWidget):
         except ValueError:
             date_str = session_id
 
-        # Get preview from first user message
         preview = ""
         for msg in messages:
             if msg.get("role") == "user":
@@ -542,19 +589,17 @@ class AIAssistantDockWidget(QtWidgets.QDockWidget):
                 preview = text[:40] + "..." if len(text) > 40 else text
                 break
 
-        # Set label
         title_text = f"{date_str} - {preview}" if preview else date_str
-        FreeCAD.Console.PrintMessage(f"AIAssistant: Setting session title to: {title_text}\n")
         self._session_label.setText(title_text)
         self._session_label.show()
-        FreeCAD.Console.PrintMessage(f"AIAssistant: Session label visible={self._session_label.isVisible()}\n")
 
     def _open_sessions_folder(self):
-        """Open the sessions folder in file manager (cross-platform)."""
+        """Open the sessions folder in file manager."""
         import sys
         folder_path = str(self.session_manager._sessions_dir)
         try:
             if sys.platform == "win32":
+                import os
                 os.startfile(folder_path)
             elif sys.platform == "darwin":
                 subprocess.run(["open", folder_path])
@@ -580,41 +625,50 @@ class AIAssistantDockWidget(QtWidgets.QDockWidget):
 
         self.pending_input = user_input
 
-        # Log message sent
-        ActivityLogger.log_message_sent(user_input, session_id=self.session_manager.get_current_session_id())
+        # Log user prompt to console for debugging
+        preview = user_input.replace('\n', ' ')
+        FreeCAD.Console.PrintMessage(f"DrawingAssistant: User: {preview}\n")
 
-        # Show typing indicator (show review phase only if self-review is enabled)
+        # Log message sent
+        ActivityLogger.log_message_sent(
+            user_input, session_id=self.session_manager.get_current_session_id()
+        )
+
+        # Show typing indicator
         self._chat.show_typing(show_review_phase=self.self_review_action.isChecked())
         self._chat.set_input_enabled(False)
 
         # Update project directory (handles document changes)
         self._update_project_dir()
 
-        # Ensure source file exists for saved documents
-        self._ensure_source_file()
+        # Ensure pages/ directory exists
+        self._ensure_pages_dir()
 
-        # Backup source.py before Claude potentially edits it (for restore on cancel)
-        SourceManager.backup_source()
+        # Backup pages/ before Claude potentially edits them
+        SourceManager.backup_pages()
 
-        # Build context if enabled (using context widget selection)
+        # Build context if enabled
         context = ""
         if self.context_action.isChecked():
             objects_filter = self._context_widget.get_context_objects()
             context = ContextBuilder.build_context(objects_filter=objects_filter)
 
-        # Append warnings from last execution to context (agentic learning)
+        # Append warnings from last execution to context
         if self._last_execution_warnings:
             warnings_text = "\n".join(self._last_execution_warnings)
-            context += f"\n\n### Warnings from Previous Execution:\n```\n{warnings_text}\n```\nPlease learn from these warnings and avoid using deprecated APIs."
-            self._last_execution_warnings = []  # Clear after including in context
+            context += (
+                f"\n\n### Warnings from Previous Execution:\n```\n{warnings_text}\n```\n"
+                "Please learn from these warnings and avoid using deprecated APIs."
+            )
+            self._last_execution_warnings = []
 
-        # Append error from last execution to context (agentic learning)
+        # Append error from last execution to context
         if self._last_execution_error:
-            context += f"\n\n### Error from Previous Execution:\n```\n{self._last_execution_error}\n```\nPlease fix this error in your next code generation."
-            self._last_execution_error = None  # Clear after including in context
-
-        # NOTE: Snapshot is deferred to _on_response() — only captured when
-        # source.py was actually edited. Avoids unnecessary I/O for questions.
+            context += (
+                f"\n\n### Error from Previous Execution:\n```\n{self._last_execution_error}\n```\n"
+                "Please fix this error in your next code generation."
+            )
+            self._last_execution_error = None
 
         # Get conversation history
         conversation = self._chat.get_conversation_history()
@@ -638,14 +692,14 @@ Output ONLY a plan in this format:
 Do NOT write any code. Only output the numbered plan steps."""
 
             self.worker = LLMWorker(
-                self.llm, plan_prompt, context, conversation, self._last_screenshot,
-                self._last_multi_angle_screenshots
+                self.llm, plan_prompt, context, conversation,
+                self._get_top_view_screenshots()
             )
         else:
             # Normal mode: request code directly
             self.worker = LLMWorker(
-                self.llm, user_input, context, conversation, self._last_screenshot,
-                self._last_multi_angle_screenshots
+                self.llm, user_input, context, conversation,
+                self._get_top_view_screenshots()
             )
 
         self.worker.finished.connect(self._on_response)
@@ -655,11 +709,9 @@ Do NOT write any code. Only output the numbered plan steps."""
 
     def _on_response(self, response: str):
         """Handle successful LLM response - create preview or show plan."""
-        # Hide typing indicator
         self._chat.hide_typing()
         self._chat.set_input_enabled(True)
 
-        # Store the code for later execution
         self._last_code = response
 
         # Log response received
@@ -673,11 +725,9 @@ Do NOT write any code. Only output the numbered plan steps."""
             session_id=session_id
         )
 
-        # Log full tool calls
         if tool_calls:
             ActivityLogger.log_tool_calls(tool_calls, session_id=session_id)
 
-        # Log full response text
         ActivityLogger.log_llm_response(response, session_id=session_id)
 
         # Log full request/response for debugging
@@ -697,16 +747,19 @@ Do NOT write any code. Only output the numbered plan steps."""
 
         # Handle plan mode response (Phase 1)
         if self._plan_mode_request:
-            self._plan_mode_request = False  # Reset flag
-            FreeCAD.Console.PrintMessage("AIAssistant: Plan mode - showing plan for approval\n")
+            self._plan_mode_request = False
+            FreeCAD.Console.PrintMessage("DrawingAssistant: Plan mode - showing plan for approval\n")
             self._chat.add_plan_message(response, self._plan_user_request or "")
             self.pending_input = None
             return
 
-        # Check if Claude edited source.py directly (new direct editing flow)
+        # Check if Claude edited page files directly
         if getattr(self.llm, 'source_was_edited', False):
-            FreeCAD.Console.PrintMessage("AIAssistant: Detected direct source.py edit - using diff preview\n")
-            ActivityLogger.log_source_edited(len(tool_calls), file_path=SourceManager.get_source_path())
+            edited = getattr(self.llm, 'edited_files', [])
+            FreeCAD.Console.PrintMessage(
+                f"DrawingAssistant: Detected page edit(s): {edited} - using diff preview\n"
+            )
+            ActivityLogger.log_drawing_edited(len(tool_calls))
 
             # Capture snapshot now (document state is still pre-execution)
             snapshot_id, snapshot_path = SnapshotManager.save_snapshot()
@@ -720,21 +773,27 @@ Do NOT write any code. Only output the numbered plan steps."""
             self.pending_input = None
             return
 
-        # Claude didn't edit source.py - clear backup so patch flow is used on approve
+        # Claude didn't edit any pages - clear backup
         SourceManager.clear_backup()
 
-        # Debug: log response content for text-only responses
         FreeCAD.Console.PrintMessage(
-            f"AIAssistant: Text response length: {len(response)}, "
+            f"DrawingAssistant: Text response length: {len(response)}, "
             f"preview: {response[:100] if response else '(empty)'}...\n"
         )
 
-        # Parse description and code from response
+        # With Claude Code backend, if no files were edited, this is always
+        # a pure text response — even if Claude used Read/Glob tool calls to
+        # gather context before answering. Show it directly.
+        if isinstance(self.llm, ClaudeCodeBackend.ClaudeCodeBackend):
+            self._show_traditional_response(response)
+            self.pending_input = None
+            return
+
+        # Parse description and code from response (legacy HTTP backend path)
         description, code = self._parse_response(response)
 
         # If auto-run is enabled, skip preview and execute directly
         if self.autorun_action.isChecked():
-            # Show traditional code block for auto-run mode
             self._show_traditional_response(response)
             QtCore.QTimer.singleShot(500, lambda: self._on_run_code(code))
             return
@@ -747,14 +806,12 @@ Do NOT write any code. Only output the numbered plan steps."""
 
         # Try to create preview with auto-fix if needed
         self._attempt_preview_with_autofix(description, code, response)
-
         self.pending_input = None
 
     def _handle_source_edit_response(self, response: str, attempt: int = 1):
-        """Handle response where Claude edited source.py directly.
+        """Handle response where Claude edited page files directly.
 
-        NEW FLOW (self-review before user approval):
-        1. Get NEW source.py from disk (Claude already edited it)
+        1. Get NEW pages/ content from disk (Claude already edited them)
         2. Create persistent sandbox and execute
         3. If self-review enabled: Claude reviews sandbox, can iterate
         4. Show preview to user (after Claude is satisfied)
@@ -765,18 +822,17 @@ Do NOT write any code. Only output the numbered plan steps."""
             response: Claude's text response (explanation of changes)
             attempt: Current attempt number (1-based) for auto-fix loop
         """
-        old_source = SourceManager.get_backup_content()
-        new_source = SourceManager.read_source()
+        old_source = SourceManager.get_backup_combined()
+        new_source = SourceManager.read_all_pages()
 
-        # Debug: log what changed
         FreeCAD.Console.PrintMessage(
-            f"AIAssistant: Old source length: {len(old_source) if old_source else 0}, "
-            f"New source length: {len(new_source) if new_source else 0}\n"
+            f"DrawingAssistant: Old pages length: {len(old_source) if old_source else 0}, "
+            f"New pages length: {len(new_source) if new_source else 0}\n"
         )
 
         # If no backup or no change, just show the text response
-        if not old_source or old_source == new_source:
-            FreeCAD.Console.PrintMessage("AIAssistant: No source changes detected\n")
+        if old_source is None or old_source == new_source:
+            FreeCAD.Console.PrintMessage("DrawingAssistant: No page changes detected\n")
             SourceManager.clear_backup()
             tool_calls = getattr(self.llm, 'last_tool_calls', None)
             self._chat.add_assistant_message(response, tool_calls=tool_calls)
@@ -787,111 +843,88 @@ Do NOT write any code. Only output the numbered plan steps."""
 
         # Create persistent sandbox for self-review
         FreeCAD.Console.PrintMessage(
-            f"AIAssistant: Creating sandbox for review (attempt {attempt})...\n"
+            f"DrawingAssistant: Creating sandbox for review (attempt {attempt})...\n"
         )
         success, error_msg, session = self._preview_manager.create_sandbox_for_review(new_source)
 
-        # Capture warnings from sandbox execution (for agentic learning)
+        # Capture warnings from sandbox execution
         sandbox_warnings = self._preview_manager.get_last_warnings()
         if sandbox_warnings:
             self._last_execution_warnings.extend(sandbox_warnings)
             self._preview_manager.clear_warnings()
 
         if success and session:
-            # Hide typing indicator
             self._chat.hide_typing()
-
-            # Store session
             self._sandbox_session = session
 
             FreeCAD.Console.PrintMessage(
-                f"AIAssistant: Sandbox created with {len(session.object_shapes)} objects\n"
+                f"DrawingAssistant: Sandbox created with {len(session.object_shapes)} objects\n"
             )
             ActivityLogger.log_preview_created(len(session.object_shapes), False)
 
-            # Check if self-review is enabled (use context widget checkbox)
+            # Check if self-review is enabled
             if self._context_widget.show_review_feedback():
-                # Run self-review in sandbox before showing to user
                 self._run_sandbox_self_review()
             else:
-                # Self-review disabled - show preview immediately
                 self._finalize_sandbox_preview()
 
         elif error_msg.startswith("EXECUTION_ERROR:"):
-            # Execution error - try to auto-fix by asking Claude to fix source.py
             exec_error = error_msg[len("EXECUTION_ERROR:"):]
             FreeCAD.Console.PrintWarning(
-                f"AIAssistant: Source execution failed (attempt {attempt}): {exec_error[:200]}...\n"
+                f"DrawingAssistant: Drawing execution failed (attempt {attempt}): {exec_error[:200]}...\n"
             )
 
             if attempt >= MAX_FIX_ATTEMPTS:
-                # Give up after max attempts
                 FreeCAD.Console.PrintWarning(
-                    f"AIAssistant: Max auto-fix attempts ({MAX_FIX_ATTEMPTS}) reached, giving up\n"
+                    f"DrawingAssistant: Max auto-fix attempts ({MAX_FIX_ATTEMPTS}) reached, giving up\n"
                 )
                 self._chat.hide_typing()
-                SourceManager.restore_source()
+                SourceManager.restore_pages()
                 self._chat.add_error_message(
                     f"Code execution failed after {MAX_FIX_ATTEMPTS} fix attempts.\n\n"
                     f"Last error:\n```\n{exec_error[:500]}\n```"
                 )
                 return
 
-            # Request fix from Claude
             FreeCAD.Console.PrintMessage(
-                f"AIAssistant: Requesting fix from Claude (attempt {attempt + 1})...\n"
+                f"DrawingAssistant: Requesting fix from Claude (attempt {attempt + 1})...\n"
             )
             self._chat.show_typing(show_review_phase=self.self_review_action.isChecked())
             self._request_source_fix(new_source, exec_error, response, attempt)
         else:
-            # Other diff preview failure - restore backup and show error
-            FreeCAD.Console.PrintWarning(f"AIAssistant: Diff preview failed: {error_msg}\n")
+            FreeCAD.Console.PrintWarning(f"DrawingAssistant: Diff preview failed: {error_msg}\n")
             self._chat.hide_typing()
-            SourceManager.restore_source()
+            SourceManager.restore_pages()
             self._chat.add_error_message(f"Preview failed: {error_msg}")
 
-    def _attempt_preview_with_autofix(self, description: str, code: str, original_response: str, attempt: int = 1):
-        """Try to create preview, auto-fix errors if needed.
-
-        Args:
-            description: Text description from LLM response
-            code: Python code to execute
-            original_response: Original full LLM response (for fallback display)
-            attempt: Current attempt number (1-based)
-        """
-        # Keep typing indicator visible during retries
+    def _attempt_preview_with_autofix(self, description: str, code: str,
+                                       original_response: str, attempt: int = 1):
+        """Try to create preview, auto-fix errors if needed."""
         if attempt > 1:
             self._chat.show_typing(show_review_phase=self.self_review_action.isChecked())
-            FreeCAD.Console.PrintMessage(f"AIAssistant: Auto-fix attempt {attempt}...\n")
+            FreeCAD.Console.PrintMessage(f"DrawingAssistant: Auto-fix attempt {attempt}...\n")
 
-        # Try to create preview
-        FreeCAD.Console.PrintMessage(f"AIAssistant: Creating preview (attempt {attempt})...\n")
+        FreeCAD.Console.PrintMessage(f"DrawingAssistant: Creating preview (attempt {attempt})...\n")
         success, error_msg = self._preview_manager.create_preview(code)
 
         if success:
-            # Get preview summary
             preview_items = self._preview_manager.get_preview_summary()
             is_deletion = self._preview_manager.is_deletion_preview()
             FreeCAD.Console.PrintMessage(
-                f"AIAssistant: Preview created with {len(preview_items)} objects "
+                f"DrawingAssistant: Preview created with {len(preview_items)} objects "
                 f"(deletion={is_deletion})\n"
             )
             ActivityLogger.log_preview_created(len(preview_items), is_deletion)
 
-            # Hide typing if shown during retry
             if attempt > 1:
                 self._chat.hide_typing()
 
-            # Show preview widget with appropriate description
             if is_deletion:
                 default_desc = "I'll delete the following objects:"
             else:
                 default_desc = "I'll create the following objects:"
 
-            # Check if auto-accept is enabled
             auto_approve = self.auto_accept_action.isChecked()
-
-            # Get tool calls from backend (if any)
             tool_calls = getattr(self.llm, 'last_tool_calls', None)
 
             self._chat.add_preview_message(
@@ -904,44 +937,33 @@ Do NOT write any code. Only output the numbered plan steps."""
             )
             return
 
-        # Preview failed - check if this is a deletion operation
-        # Deletion failures should NOT trigger auto-fix (can't "fix" a non-existent object)
+        # Deletion failures should NOT trigger auto-fix
         is_deletion_attempt = self._preview_manager.is_deletion_preview() or \
                               bool(self._preview_manager._detect_deletion_targets(code))
 
         if is_deletion_attempt:
-            # Deletion failed - show error to user, don't try to auto-fix
-            FreeCAD.Console.PrintWarning(f"AIAssistant: Deletion preview failed: {error_msg}\n")
+            FreeCAD.Console.PrintWarning(f"DrawingAssistant: Deletion preview failed: {error_msg}\n")
             self._chat.hide_typing()
             self._preview_manager.clear_preview()
             self._chat.add_error_message(f"Cannot delete: {error_msg}")
             return
 
-        # Preview failed (creation) - try auto-fix
         if attempt >= MAX_FIX_ATTEMPTS:
-            # Give up - show traditional code block
-            FreeCAD.Console.PrintWarning(f"AIAssistant: Max auto-fix attempts reached, showing code block\n")
+            FreeCAD.Console.PrintWarning(
+                "DrawingAssistant: Max auto-fix attempts reached, showing code block\n"
+            )
             self._chat.hide_typing()
             self._preview_manager.clear_preview()
             self._show_traditional_response(original_response)
             return
 
-        # Ask LLM to fix the code
-        FreeCAD.Console.PrintMessage(f"AIAssistant: Preview failed, requesting fix from LLM...\n")
-        # Show typing indicator during auto-fix
+        FreeCAD.Console.PrintMessage("DrawingAssistant: Preview failed, requesting fix from LLM...\n")
         self._chat.show_typing(show_review_phase=self.self_review_action.isChecked())
         self._request_code_fix(description, code, error_msg, original_response, attempt)
 
-    def _request_code_fix(self, description: str, code: str, error: str, original_response: str, attempt: int):
-        """Send error to LLM and request fixed code.
-
-        Args:
-            description: Original description from response
-            code: Code that failed
-            error: Error message from execution
-            original_response: Original full response (for fallback)
-            attempt: Current attempt number
-        """
+    def _request_code_fix(self, description: str, code: str, error: str,
+                          original_response: str, attempt: int):
+        """Send error to LLM and request fixed code."""
         fix_prompt = f"""The following FreeCAD Python code failed with an error:
 
 ```python
@@ -956,138 +978,106 @@ If you need to reference existing objects, recreate them or use hardcoded values
 
 Return ONLY the fixed Python code in a ```python code block, no explanation needed."""
 
-        # Start background worker for fix request
         self._fix_worker = LLMWorker(self.llm, fix_prompt, "", [])
         self._fix_worker.finished.connect(
-            lambda fixed_response: self._on_fix_response(description, fixed_response, original_response, attempt)
+            lambda fixed_response: self._on_fix_response(
+                description, fixed_response, original_response, attempt
+            )
         )
         self._fix_worker.error.connect(self._on_fix_error)
         self._fix_worker.start()
 
-    def _on_fix_response(self, description: str, response: str, original_response: str, attempt: int):
-        """Handle fixed code from LLM.
-
-        Args:
-            description: Original description
-            response: LLM response with fixed code
-            original_response: Original full response (for fallback)
-            attempt: Previous attempt number
-        """
+    def _on_fix_response(self, description: str, response: str,
+                         original_response: str, attempt: int):
+        """Handle fixed code from LLM."""
         _, fixed_code = self._parse_response(response)
 
         if fixed_code.strip():
-            # Retry preview with fixed code
-            self._attempt_preview_with_autofix(description, fixed_code, original_response, attempt + 1)
+            self._attempt_preview_with_autofix(
+                description, fixed_code, original_response, attempt + 1
+            )
         else:
-            # Couldn't parse fixed code - fall back
-            FreeCAD.Console.PrintWarning("AIAssistant: Couldn't parse fixed code, showing original\n")
+            FreeCAD.Console.PrintWarning(
+                "DrawingAssistant: Couldn't parse fixed code, showing original\n"
+            )
             self._chat.hide_typing()
             self._preview_manager.clear_preview()
             self._show_traditional_response(original_response)
 
     def _on_fix_error(self, error_msg: str):
         """Handle error from fix request."""
-        FreeCAD.Console.PrintError(f"AIAssistant: Auto-fix request failed: {error_msg}\n")
+        FreeCAD.Console.PrintError(f"DrawingAssistant: Auto-fix request failed: {error_msg}\n")
         self._chat.hide_typing()
         self._preview_manager.clear_preview()
-        # Fall back to showing original response
         if self._last_code:
             self._show_traditional_response(self._last_code)
 
-    def _request_source_fix(self, failed_source: str, error: str, original_response: str, attempt: int):
-        """Send execution error to Claude and request fixed source.py.
-
-        This is used when Claude's edited source.py fails to execute in sandbox.
-        Claude will use the Edit tool to fix source.py directly.
-
-        Args:
-            failed_source: The source.py content that failed
-            error: Error message/traceback from execution
-            original_response: Claude's original response text
-            attempt: Current attempt number
-        """
-        # Store for retry handling
+    def _request_source_fix(self, failed_source: str, error: str,
+                            original_response: str, attempt: int):
+        """Send execution error to Claude and request fixed page files."""
         self._source_fix_original_response = original_response
         self._source_fix_attempt = attempt
 
-        fix_prompt = f"""The source.py you just edited failed to execute with this error:
+        fix_prompt = f"""The page file(s) you just edited failed to execute with this error:
 
 ```
 {error[:1500]}
 ```
 
-Please fix the source.py file using the Edit tool. Common issues:
-- Accessing edge.Vertexes[1] on circular edges (circles only have 1 vertex)
-- Assuming specific edge/face indices after boolean operations
+Please fix the page file using the Edit tool. Common issues:
+- Draft.make_circle(radius, placement): 2nd arg must be FreeCAD.Placement, NOT a Vector
+- Draft.make_linear_dimension() ViewObject has NO ArrowSize attribute
 - Using undefined variables
-- Arch.makeRoof() with angles parameter: Set angles AFTER creation (roof.Angles = [...])
-- Geometry validation failed: Object has invalid/null shape - check API usage
 - Object "failed to compute": Usually means incorrect parameter types or values
+- Geometry validation failed: Check API usage
 
-Read source.py to understand what went wrong, then fix it."""
+Read the relevant page file to understand what went wrong, then fix it."""
 
-        # Start background worker for fix request
         self._source_fix_worker = LLMWorker(self.llm, fix_prompt, "", [])
         self._source_fix_worker.finished.connect(self._on_source_fix_response)
         self._source_fix_worker.error.connect(self._on_source_fix_error)
         self._source_fix_worker.start()
 
     def _on_source_fix_response(self, response: str):
-        """Handle response from source fix request.
-
-        After Claude fixes source.py, retry the diff preview.
-
-        Args:
-            response: Claude's response (explanation of fix)
-        """
+        """Handle response from source fix request."""
         attempt = getattr(self, '_source_fix_attempt', 1)
         original_response = getattr(self, '_source_fix_original_response', response)
 
-        # Check if Claude edited source.py
         if getattr(self.llm, 'source_was_edited', False):
             FreeCAD.Console.PrintMessage(
-                f"AIAssistant: Claude fixed source.py, retrying preview (attempt {attempt + 1})\n"
+                f"DrawingAssistant: Claude fixed page files, retrying preview (attempt {attempt + 1})\n"
             )
-            # Retry the diff preview with the fixed source
             self._handle_source_edit_response(original_response, attempt + 1)
         else:
-            # Claude didn't edit source.py - show error
             FreeCAD.Console.PrintWarning(
-                "AIAssistant: Claude didn't edit source.py in fix response\n"
+                "DrawingAssistant: Claude didn't edit any pages in fix response\n"
             )
             self._chat.hide_typing()
-            SourceManager.restore_source()
+            SourceManager.restore_pages()
             self._chat.add_error_message(
-                f"Could not auto-fix source.py. Claude's response:\n\n{response}"
+                f"Could not auto-fix page files. Claude's response:\n\n{response}"
             )
 
     def _on_source_fix_error(self, error_msg: str):
         """Handle error from source fix request."""
-        FreeCAD.Console.PrintError(f"AIAssistant: Source fix request failed: {error_msg}\n")
+        FreeCAD.Console.PrintError(f"DrawingAssistant: Source fix request failed: {error_msg}\n")
         self._chat.hide_typing()
-        SourceManager.restore_source()
+        SourceManager.restore_pages()
         self._chat.add_error_message(f"Auto-fix failed: {error_msg}")
 
     def _parse_response(self, response: str) -> tuple:
-        """Parse LLM response to extract description and code.
-
-        Returns:
-            Tuple of (description, code)
-        """
+        """Parse LLM response to extract description and code."""
         import re
 
         # Try to find Python code block with closing fence
         code_match = re.search(r'```python\s*(.*?)\s*```', response, re.DOTALL)
         if code_match:
             code = code_match.group(1).strip()
-            # Description is everything before the code block
             description = response[:code_match.start()].strip()
-            # Clean up description - remove markdown artifacts
             description = re.sub(r'\n+', ' ', description)
-            description = description.strip()
             return (description, code)
 
-        # Try to find any code block with closing fence
+        # Try any code block
         code_match = re.search(r'```\s*(.*?)\s*```', response, re.DOTALL)
         if code_match:
             code = code_match.group(1).strip()
@@ -1095,28 +1085,36 @@ Read source.py to understand what went wrong, then fix it."""
             description = re.sub(r'\n+', ' ', description)
             return (description, code)
 
-        # Handle UNCLOSED code blocks (LLM truncated response without closing ```)
-        # This is a common issue where the response has ```python but no closing ```
+        # Handle unclosed code blocks
         unclosed_match = re.search(r'```python\s*\n(.*)', response, re.DOTALL)
         if unclosed_match:
             code = unclosed_match.group(1).strip()
             description = response[:unclosed_match.start()].strip()
             description = re.sub(r'\n+', ' ', description)
             FreeCAD.Console.PrintWarning(
-                "AIAssistant: Detected unclosed code block - LLM response may be truncated\n"
+                "DrawingAssistant: Detected unclosed code block - response may be truncated\n"
             )
             return (description, code)
 
-        # No code block found - might be pure code or pure text
-        # Check if it looks like Python code
+        # No code block found - check if it looks like Python code
         code_indicators = [
             'import FreeCAD',
             'FreeCAD.',
-            'Part.',
+            'Draft.',
+            'TechDraw',
+            'Spreadsheet',
             'doc.addObject',
-            'doc.removeObject',  # Deletion operations
-            '.removeObject(',    # Alternative pattern
-            'doc.recompute()',   # Common ending
+            'doc.removeObject',
+            '.removeObject(',
+            'doc.recompute()',
+            'make_wire',
+            'make_circle',
+            'make_text',
+            'make_dimension',
+            'make_linear_dimension',
+            'make_rectangle',
+            'DrawPage',
+            'DrawSVGTemplate',
         ]
         if any(indicator in response for indicator in code_indicators):
             return ("", response.strip())
@@ -1125,8 +1123,7 @@ Read source.py to understand what went wrong, then fix it."""
         return (response.strip(), "")
 
     def _show_traditional_response(self, response: str):
-        """Show response as traditional code block (for backward compatibility)."""
-        # Build debug info if debug mode enabled
+        """Show response as traditional code block."""
         debug_info = None
         if self.debug_action.isChecked():
             debug_info = {
@@ -1139,20 +1136,19 @@ Read source.py to understand what went wrong, then fix it."""
                 "user_message": self.pending_input or "",
             }
 
-        # Display response with or without streaming
         use_streaming = self.streaming_action.isChecked()
         tool_calls = getattr(self.llm, 'last_tool_calls', None)
-        self._chat.add_assistant_message(response, stream=use_streaming, debug_info=debug_info, tool_calls=tool_calls)
+        self._chat.add_assistant_message(
+            response, stream=use_streaming, debug_info=debug_info, tool_calls=tool_calls
+        )
 
     def _on_error(self, error_msg: str):
         """Handle LLM error."""
         self._chat.hide_typing()
         self._chat.set_input_enabled(True)
 
-        # Log error
         ActivityLogger.log_error(error_msg, context=self.pending_input)
 
-        # Log failed request for debugging
         self.session_manager.log_llm_request(
             user_message=self.pending_input or "",
             system_prompt=self.llm.last_system_prompt,
@@ -1177,163 +1173,210 @@ Read source.py to understand what went wrong, then fix it."""
 
     def _on_preview_approved(self, code: str):
         """Handle user approval of preview - execute code for real."""
-        FreeCAD.Console.PrintMessage("AIAssistant: Preview approved - executing code\n")
+        FreeCAD.Console.PrintMessage("DrawingAssistant: Preview approved - executing code\n")
         ActivityLogger.log_preview_approved()
 
-        # Clear the preview objects
         self._preview_manager.clear_preview()
 
-        # Check if this is a source edit (backup exists) vs old-style patch
+        # Check if this is a page edit (backup exists) vs old-style patch
         if SourceManager.has_backup():
-            # Source edit flow: source.py already has the changes, execute it
-            FreeCAD.Console.PrintMessage("AIAssistant: Executing edited source.py\n")
-            source_content = SourceManager.read_source()
+            FreeCAD.Console.PrintMessage("DrawingAssistant: Executing edited pages\n")
 
-            # Capture state BEFORE clearing (to detect what was deleted)
             before_snapshot = SnapshotManager.capture_current_state()
 
-            # CRITICAL: Clear all document objects before re-executing source.py
-            # This prevents duplicates (Floor001, etc.) when objects already exist
             doc = FreeCAD.ActiveDocument
             if doc:
-                # Build list of objects to remove (excluding system objects)
-                # IMPORTANT: Reverse order so children/dependents are deleted before
-                # parents/containers. doc.Objects is in creation order (parents first),
-                # so reversing ensures e.g. TechDraw views are removed before their
-                # DrawPage, preventing SIGSEGV from dangling PropertyLinkList pointers.
-                objects_to_remove = [
-                    obj.Name for obj in reversed(doc.Objects)
-                    if obj.TypeId not in ("App::Origin", "App::Plane", "App::Line")
-                ]
-                FreeCAD.Console.PrintMessage(
-                    f"AIAssistant: Clearing {len(objects_to_remove)} objects before re-execution\n"
-                )
-                for obj_name in objects_to_remove:
-                    try:
-                        doc.removeObject(obj_name)
-                    except Exception:
-                        pass
+                success, message, warnings = self._execute_pages_smart(doc)
+            else:
+                success, message, warnings = False, "No active document", []
 
-            # Execute the new source.py (on clean document)
-            success, message, warnings = CodeExecutor.execute(source_content)
             if warnings:
                 self._last_execution_warnings.extend(warnings)
 
-            # Capture state after
             after_snapshot = SnapshotManager.capture_current_state()
 
             if success:
-                # Clear backup - source.py is now canonical
                 SourceManager.clear_backup()
 
-                # Capture screenshot for LLM feedback
-                self._last_screenshot = self._capture_screenshot()
-
-                # Capture multi-angle screenshots for self-review and debugging
-                self._capture_multi_angle_screenshots()
-
-                # Detect changes
                 change_set = ChangeDetector.detect_changes(
                     before_snapshot, after_snapshot, code=""
                 )
                 change_set.execution_success = success
                 change_set.execution_message = message
 
-                # Show result directly - self-review already happened in sandbox
-                # (before user saw the preview and approved)
-                self._show_change_result(change_set)
+                self._generate_and_maybe_review(change_set)
             else:
-                # Execution failed - restore backup AND re-execute to restore objects
-                FreeCAD.Console.PrintError(f"AIAssistant: Source execution failed: {message}\n")
-                SourceManager.restore_source()
+                FreeCAD.Console.PrintError(
+                    f"DrawingAssistant: Drawing execution failed: {message}\n"
+                )
+                SourceManager.restore_pages()
 
-                # CRITICAL: Re-execute the restored source.py to restore document objects
-                # (we cleared them before the failed execution)
-                restored_source = SourceManager.read_source()
-                if restored_source:
-                    FreeCAD.Console.PrintMessage("AIAssistant: Re-executing backup to restore objects\n")
-                    CodeExecutor.execute(restored_source)  # Ignore return values for restore
+                # Re-execute the restored pages to restore document objects
+                CodeExecutor.clear_page_object_map()
+                _clear_objects(doc)
+                restored_pages = SourceManager.list_pages()
+                if restored_pages:
+                    FreeCAD.Console.PrintMessage(
+                        "DrawingAssistant: Re-executing backup to restore objects\n"
+                    )
+                    CodeExecutor.execute_pages(restored_pages)
 
-                self._last_execution_error = message  # Store for agentic learning
+                self._last_execution_error = message
                 self._chat.add_error_message(f"Execution error: {message}")
         else:
-            # Old-style patch flow: execute the code and show changes
             self._on_run_code(code, already_executed=True)
+
+    def _execute_pages_smart(self, doc) -> tuple:
+        """Execute pages with incremental rebuild when possible.
+
+        Checks whether only regular (non-helper) pages changed and a valid
+        object mapping exists.  If so, clears only the changed pages' objects
+        and re-executes only those pages.  Otherwise falls back to a full
+        rebuild that also builds the mapping for next time.
+
+        Returns:
+            Tuple of (success: bool, message: str, warnings: list)
+        """
+        modified, added, deleted = SourceManager.get_changed_pages()
+        page_map = CodeExecutor.get_page_object_map()
+        tracked_doc = CodeExecutor.get_tracked_doc_name()
+
+        all_changed = modified + added + deleted
+        can_incremental = (
+            page_map is not None
+            and all_changed
+            and not any(f.startswith("_") for f in all_changed)
+            and all(f in page_map for f in modified + deleted)
+            and tracked_doc == doc.Name
+        )
+
+        if can_incremental:
+            return self._execute_incremental(doc, modified, added, deleted, page_map)
+
+        reason = "first run" if page_map is None else "full rebuild required"
+        FreeCAD.Console.PrintMessage(
+            f"DrawingAssistant: Full rebuild ({reason})\n"
+        )
+        _clear_objects(doc)
+        page_paths = SourceManager.list_pages()
+        return CodeExecutor.execute_pages(page_paths)
+
+    def _execute_incremental(self, doc, modified, added, deleted, page_map) -> tuple:
+        """Execute only the changed pages, clearing their old objects first.
+
+        Falls back to full rebuild if any page fails to execute.
+        """
+        changed_desc = ", ".join(modified + added)
+        FreeCAD.Console.PrintMessage(
+            f"DrawingAssistant: Incremental execution for: {changed_desc}\n"
+        )
+
+        # Selective clear: only changed + deleted pages' objects
+        objects_to_clear = set()
+        for f in modified + deleted:
+            objects_to_clear.update(page_map.get(f, set()))
+
+        if objects_to_clear:
+            _clear_objects(doc, objects_to_clear)
+
+        # Selective execute: modified + added pages only
+        pages_dir = SourceManager.get_pages_dir()
+        helper_paths = SourceManager.list_helper_pages()
+
+        all_warnings = []
+        for filename in sorted(modified + added, key=SourceManager.page_sort_key_str):
+            page_path = pages_dir / filename
+            success, msg, warnings, new_objs = CodeExecutor.execute_single_page(
+                page_path, helper_paths
+            )
+            all_warnings.extend(warnings)
+            if not success:
+                FreeCAD.Console.PrintWarning(
+                    f"DrawingAssistant: Incremental failed for {filename}: {msg}\n"
+                    "  Falling back to full rebuild\n"
+                )
+                CodeExecutor.clear_page_object_map()
+                _clear_objects(doc)
+                page_paths = SourceManager.list_pages()
+                return CodeExecutor.execute_pages(page_paths)
+            CodeExecutor.update_page_object_map(filename, new_objs)
+
+        for filename in deleted:
+            CodeExecutor.remove_from_page_object_map(filename)
+
+        return True, "Incremental execution succeeded", all_warnings
 
     def _on_preview_cancelled(self):
         """Handle user cancellation of preview."""
-        FreeCAD.Console.PrintMessage("AIAssistant: Preview cancelled\n")
+        FreeCAD.Console.PrintMessage("DrawingAssistant: Preview cancelled\n")
         ActivityLogger.log_preview_cancelled()
 
-        # Clear the preview objects
         self._preview_manager.cancel()
 
-        # Restore source.py from backup if this was a source edit
+        # Restore pages from backup if this was a page edit
         if SourceManager.has_backup():
-            FreeCAD.Console.PrintMessage("AIAssistant: Restoring source.py from backup\n")
-            SourceManager.restore_source()
-            ActivityLogger.log_source_restored()
+            FreeCAD.Console.PrintMessage("DrawingAssistant: Restoring pages from backup\n")
+            SourceManager.restore_pages()
+            ActivityLogger.log_drawing_restored()
 
-        # Add a system message
         self._chat.add_system_message("Preview cancelled")
 
     def _on_plan_approved(self, plan_text: str):
         """Handle plan approval - request code generation (Phase 2)."""
-        FreeCAD.Console.PrintMessage("AIAssistant: Plan approved - requesting code generation\n")
+        FreeCAD.Console.PrintMessage(
+            "DrawingAssistant: Plan approved - requesting code generation\n"
+        )
         ActivityLogger.log_plan_approved(plan_text)
         self._pending_plan = plan_text
         self._generate_code_from_plan(plan_text)
 
     def _on_plan_edited(self, edited_plan: str):
-        """Handle plan edit and approval - request code with edited plan."""
-        FreeCAD.Console.PrintMessage("AIAssistant: Plan edited and approved - requesting code generation\n")
+        """Handle plan edit and approval."""
+        FreeCAD.Console.PrintMessage(
+            "DrawingAssistant: Plan edited and approved - requesting code generation\n"
+        )
         ActivityLogger.log_plan_edited(edited=edited_plan)
         self._pending_plan = edited_plan
         self._generate_code_from_plan(edited_plan)
 
     def _on_plan_cancelled(self):
         """Handle plan cancellation."""
-        FreeCAD.Console.PrintMessage("AIAssistant: Plan cancelled\n")
+        FreeCAD.Console.PrintMessage("DrawingAssistant: Plan cancelled\n")
         ActivityLogger.log_plan_cancelled()
         self._pending_plan = None
         self._plan_user_request = None
         self._chat.add_system_message("Plan cancelled")
 
     def _generate_code_from_plan(self, plan_text: str):
-        """Request code generation based on approved plan (Phase 2).
-
-        Args:
-            plan_text: The approved (or edited) plan text
-        """
-        # Prevent double-send
+        """Request code generation based on approved plan (Phase 2)."""
         if self._plan_worker and self._plan_worker.isRunning():
             return
 
-        # Show typing indicator
         self._chat.show_typing(show_review_phase=self.self_review_action.isChecked())
         self._chat.set_input_enabled(False)
 
-        # Build context (using context widget selection)
         context = ""
         if self.context_action.isChecked():
             objects_filter = self._context_widget.get_context_objects()
             context = ContextBuilder.build_context(objects_filter=objects_filter)
 
-        # Append warnings from last execution to context (agentic learning)
         if self._last_execution_warnings:
             warnings_text = "\n".join(self._last_execution_warnings)
-            context += f"\n\n### Warnings from Previous Execution:\n```\n{warnings_text}\n```\nPlease learn from these warnings and avoid using deprecated APIs."
-            self._last_execution_warnings = []  # Clear after including in context
+            context += (
+                f"\n\n### Warnings from Previous Execution:\n```\n{warnings_text}\n```\n"
+                "Please learn from these warnings and avoid using deprecated APIs."
+            )
+            self._last_execution_warnings = []
 
-        # Append error from last execution to context (agentic learning)
         if self._last_execution_error:
-            context += f"\n\n### Error from Previous Execution:\n```\n{self._last_execution_error}\n```\nPlease fix this error in your next code generation."
-            self._last_execution_error = None  # Clear after including in context
+            context += (
+                f"\n\n### Error from Previous Execution:\n```\n{self._last_execution_error}\n```\n"
+                "Please fix this error in your next code generation."
+            )
+            self._last_execution_error = None
 
-        # Get conversation history
         conversation = self._chat.get_conversation_history()
 
-        # Build prompt for code generation
         code_prompt = f"""The user approved this execution plan:
 
 {plan_text}
@@ -1343,10 +1386,9 @@ Original request: {self._plan_user_request or ""}
 Now write the FreeCAD Python code to implement this plan exactly as specified.
 Return ONLY the Python code in a ```python code block."""
 
-        # Start background worker for code generation
         self._plan_worker = LLMWorker(
-            self.llm, code_prompt, context, conversation, self._last_screenshot,
-            self._last_multi_angle_screenshots
+            self.llm, code_prompt, context, conversation,
+            self._get_top_view_screenshots()
         )
         self._plan_worker.finished.connect(self._on_plan_code_response)
         self._plan_worker.error.connect(self._on_error)
@@ -1354,18 +1396,13 @@ Return ONLY the Python code in a ```python code block."""
 
     def _on_plan_code_response(self, response: str):
         """Handle code response from plan (Phase 2)."""
-        # Hide typing indicator
         self._chat.hide_typing()
         self._chat.set_input_enabled(True)
 
-        # Clear plan state
         self._pending_plan = None
         self._plan_user_request = None
-
-        # Store code for later execution
         self._last_code = response
 
-        # Log the request
         self.session_manager.log_llm_request(
             user_message="[Plan Phase 2: Code Generation]",
             system_prompt=self.llm.last_system_prompt,
@@ -1380,40 +1417,28 @@ Return ONLY the Python code in a ```python code block."""
             cost_usd=getattr(self.llm, 'last_cost', 0)
         )
 
-        # Parse and show preview as normal
         description, code = self._parse_response(response)
 
         if not code.strip():
             self._show_traditional_response(response)
             return
 
-        # Create preview
         self._attempt_preview_with_autofix(description, code, response)
 
     def _on_run_code(self, code: str, already_executed: bool = False):
-        """Execute the provided code and display changes.
-
-        Args:
-            code: Python code to execute
-            already_executed: If True, don't show Run button (code came from preview approval)
-        """
+        """Execute the provided code and display changes."""
         if not code.strip():
             return
 
-        # Capture document state BEFORE execution
         before_snapshot = SnapshotManager.capture_current_state()
 
-        # Execute the code
         success, message, warnings = CodeExecutor.execute(code)
         if warnings:
             self._last_execution_warnings.extend(warnings)
         ActivityLogger.log_code_executed(success, message, code=code)
 
-        # Capture document state AFTER execution
         after_snapshot = SnapshotManager.capture_current_state()
 
-        # Detect changes
-        # Don't include code if already executed (from preview approval) - prevents showing Run button
         change_set = ChangeDetector.detect_changes(
             before_snapshot, after_snapshot,
             code="" if already_executed else code
@@ -1422,32 +1447,21 @@ Return ONLY the Python code in a ```python code block."""
         change_set.execution_message = message
 
         if success:
-            # Capture screenshot for LLM feedback
-            self._last_screenshot = self._capture_screenshot()
-
-            # Capture multi-angle screenshots for self-review and debugging
-            self._capture_multi_angle_screenshots()
-
-            # Save code to source file (for regeneration and context)
-            SourceManager.append_code(code)
-
-            # Run self-review (will show result when done)
-            self._self_review_attempt = 0  # Reset for new operation
-            self._run_self_review(change_set)
+            self._generate_and_maybe_review(change_set)
         else:
-            self._last_execution_error = message  # Store for agentic learning
+            self._last_execution_error = message
             self._chat.add_error_message(f"Execution error: {message}")
 
     def _on_mode_changed(self, mode: str):
         """Handle segmented control mode change."""
-        if mode == "drawing":
+        if mode == "3d":
             try:
                 grp = FreeCAD.ParamGet("User parameter:BaseApp/Preferences/AIAssistant")
                 grp.SetString("LastMode", mode)
             except Exception:
                 pass
-            import DrawingAssistant
-            DrawingAssistant.show()
+            import AIAssistant
+            AIAssistant.show()
 
     def _on_clear(self):
         """Clear the chat UI."""
@@ -1462,61 +1476,41 @@ Return ONLY the Python code in a ```python code block."""
         ActivityLogger.log_session_cleared()
 
     def _on_debug_toggled(self, checked: bool):
-        """Handle debug mode toggle - reload current session to show/hide debug info."""
+        """Handle debug mode toggle."""
         current_id = self.session_manager.get_current_session_id()
-        FreeCAD.Console.PrintMessage(f"AIAssistant: Debug toggled to {checked}, current_session={current_id}\n")
         if current_id:
-            # Reload current session with new debug mode setting
             self._on_load_session(current_id)
 
     def _get_project_dir(self) -> str:
-        """Get project directory for Claude Code working directory.
-
-        Returns:
-            Path to project folder (parent/doc_stem/) or None if doc not saved
-        """
+        """Get project directory for Claude Code working directory."""
         doc = FreeCAD.ActiveDocument
         if doc and doc.FileName:
             doc_path = Path(doc.FileName)
-            # Project folder: parent/doc_stem/
             project_dir = doc_path.parent / doc_path.stem
-            # Create folder if needed (matches SourceManager/SessionManager pattern)
             project_dir.mkdir(parents=True, exist_ok=True)
             return str(project_dir)
         return None
 
     def _update_project_dir(self):
-        """Update project directory when document changes.
-
-        Called before each LLM request to handle:
-        - Document opened after panel created
-        - Document saved to new location
-        - Switching between documents
-        """
+        """Update project directory when document changes."""
         new_dir = self._get_project_dir()
         if new_dir and new_dir != self._project_dir:
             self._project_dir = new_dir
-            # Update backend's project_dir if it supports it
             if hasattr(self.llm, 'project_dir'):
                 self.llm.project_dir = new_dir
                 FreeCAD.Console.PrintMessage(
-                    f"AIAssistant: Project directory updated to {new_dir}\n"
+                    f"DrawingAssistant: Project directory updated to {new_dir}\n"
                 )
-            # Ensure CLAUDE.md exists in new project
             self._ensure_claude_md()
 
     def _prompt_save_document(self):
-        """Prompt user to save the document before using AI Assistant.
-
-        The AI Assistant requires a saved document to create a project directory
-        for source.py (code history) and session data.
-        """
+        """Prompt user to save the document before using Drawing Assistant."""
         msg_box = QtWidgets.QMessageBox(self)
         msg_box.setWindowTitle("Save Document Required")
         msg_box.setText("Please save your document first.")
         msg_box.setInformativeText(
-            "The AI Assistant needs a saved document to store:\n"
-            "• source.py - Your design's code history\n"
+            "The Drawing Assistant needs a saved document to store:\n"
+            "• pages/ - Per-page drawing scripts\n"
             "• Sessions and snapshots\n\n"
             "Would you like to save now?"
         )
@@ -1529,22 +1523,16 @@ Return ONLY the Python code in a ```python code block."""
         result = msg_box.exec()
 
         if result == QtWidgets.QMessageBox.Save:
-            # Trigger FreeCAD's Save As dialog
             try:
                 FreeCADGui.runCommand("Std_SaveAs", 0)
-                # After save, update project directory
                 self._update_project_dir()
-                self._ensure_source_file()
+                self._ensure_pages_dir()
                 self._ensure_claude_md()
             except Exception as e:
-                FreeCAD.Console.PrintError(f"AIAssistant: Save failed: {e}\n")
+                FreeCAD.Console.PrintError(f"DrawingAssistant: Save failed: {e}\n")
 
     def _ensure_claude_md(self):
-        """Ensure CLAUDE.md exists in project directory for Claude Code backend.
-
-        If using Claude Code and project dir exists but has no CLAUDE.md,
-        copy the template file.
-        """
+        """Ensure CLAUDE.md exists in project directory for Claude Code backend."""
         if not self._project_dir:
             return
 
@@ -1552,643 +1540,304 @@ Return ONLY the Python code in a ```python code block."""
         if claude_md_path.exists():
             return
 
-        # Copy template with substitutions
         try:
             template_path = Path(__file__).parent / "project_claude_template.md"
             if template_path.exists():
-                # Get FreeCAD source directory (parent of AIAssistant module)
                 freecad_source = str(Path(__file__).parent.parent.parent)
-
-                # Read template and substitute placeholders
                 template_content = template_path.read_text(encoding="utf-8")
                 content = template_content.replace("{{FREECAD_SOURCE}}", freecad_source)
-
-                # Write substituted content
                 claude_md_path.write_text(content, encoding="utf-8")
                 FreeCAD.Console.PrintMessage(
-                    f"AIAssistant: Created CLAUDE.md in {self._project_dir}\n"
+                    f"DrawingAssistant: Created CLAUDE.md in {self._project_dir}\n"
                 )
         except Exception as e:
             FreeCAD.Console.PrintWarning(
-                f"AIAssistant: Failed to create CLAUDE.md: {e}\n"
+                f"DrawingAssistant: Failed to create CLAUDE.md: {e}\n"
             )
 
-    def _ensure_source_file(self):
-        """
-        Ensure source file exists for current document.
-
-        Creates an empty source file with headers if the document is saved
-        but doesn't have a source file yet. This enables proactive source
-        tracking even before any AI code is executed.
-        """
+    def _ensure_pages_dir(self):
+        """Ensure pages/ directory exists for current document."""
         doc = FreeCAD.ActiveDocument
         if doc and doc.FileName:
             if not SourceManager.exists():
-                SourceManager.init_source_file()
+                SourceManager.init_pages_dir()
 
-    def _capture_screenshot(self) -> str:
-        """Capture current viewport as base64 PNG.
+    # =========================================================================
+    # On-Demand Review System
+    # =========================================================================
 
-        Returns:
-            Base64 encoded PNG string, or None if capture failed
-        """
-        import tempfile
-        import base64
-        import os
+    def _get_top_view_screenshots(self) -> list:
+        """Return the top view screenshot path as a list (for LLMWorker compat)."""
+        if self._last_review_kit and self._last_review_kit.top_view_path:
+            return [self._last_review_kit.top_view_path]
+        return []
 
-        try:
-            if not FreeCADGui.ActiveDocument:
-                return None
-
-            view = FreeCADGui.ActiveDocument.ActiveView
-            if not hasattr(view, "saveImage"):
-                return None  # Not a 3D view
-
-            # Set isometric view and fit all objects
-            view.viewIsometric()
-            view.fitAll()
-
-            # Force GUI update to ensure view is rendered
-            FreeCADGui.updateGui()
-
-            # Save to temp file (use NamedTemporaryFile for security)
-            with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp_file:
-                tmp_path = tmp_file.name
-            try:
-                view.saveImage(tmp_path, 800, 600)
-
-                with open(tmp_path, "rb") as f:
-                    return base64.b64encode(f.read()).decode("utf-8")
-            finally:
-                if os.path.exists(tmp_path):
-                    os.unlink(tmp_path)
-
-        except Exception as e:
-            FreeCAD.Console.PrintWarning(f"AIAssistant: Screenshot capture failed: {e}\n")
-            return None
-
-    def _run_self_review(self, change_set):
-        """Run self-review loop - ask Claude to verify the result looks correct.
-
-        If self-review is enabled and Claude finds issues, it will edit source.py
-        and the code will be re-executed. This continues until Claude is satisfied
-        or max attempts are reached.
-
-        Args:
-            change_set: The ChangeSet to show after review (if approved)
-        """
-        # Skip if disabled
-        if not self.self_review_action.isChecked():
-            self._show_change_result(change_set)
-            return
-
-        # Skip if no screenshots
-        if not self._last_multi_angle_screenshots:
-            FreeCAD.Console.PrintWarning(
-                "AIAssistant: No screenshots for self-review, skipping\n"
+    def _generate_and_maybe_review(self, change_set):
+        """Generate review kit and optionally run on-demand self-review."""
+        if self._project_dir:
+            self._last_review_kit = generate_review_kit(
+                change_set, self._project_dir
             )
-            self._show_change_result(change_set)
-            return
+        else:
+            self._last_review_kit = None
 
-        # Check attempt limit
-        self._self_review_attempt += 1
-        if self._self_review_attempt > self._max_self_review_attempts:
+        if self.self_review_action.isChecked() and self._last_review_kit:
+            self._review_attempt = 0
+            self._run_on_demand_review(change_set)
+        else:
+            self._show_change_result(change_set)
+
+    def _run_on_demand_review(self, change_set):
+        """Run on-demand self-review — Claude reads files as needed via Read tool."""
+        self._review_attempt += 1
+        if self._review_attempt > self._max_review_attempts:
             FreeCAD.Console.PrintMessage(
-                f"AIAssistant: Max self-review attempts ({self._max_self_review_attempts}) reached, showing result\n"
+                f"DrawingAssistant: Max review attempts ({self._max_review_attempts}) reached\n"
             )
-            self._self_review_attempt = 0
+            self._review_attempt = 0
             self._show_change_result(change_set)
             return
 
-        # Store change set for later
-        self._self_review_change_set = change_set
+        self._review_change_set = change_set
 
         FreeCAD.Console.PrintMessage(
-            f"AIAssistant: Running self-review (attempt {self._self_review_attempt})...\n"
+            f"DrawingAssistant: Running on-demand review (attempt {self._review_attempt})...\n"
         )
         self._chat.show_typing()
         self._chat.set_progress_reviewing()
 
-        # Build review prompt
-        review_prompt = """I just executed code that modified the 3D model. Please review the screenshots showing the result from multiple angles.
+        review_prompt = format_review_prompt(self._last_review_kit)
 
-IMPORTANT: Look carefully at the geometry from ALL angles. Common issues to check:
-- Objects not connected/aligned properly
-- Missing features or incomplete geometry
-- Objects floating in wrong positions
-- Obvious visual errors or glitches
-
-If the result looks CORRECT and matches my original request, respond with just: "LOOKS_GOOD"
-
-If there are PROBLEMS, explain briefly what's wrong and edit source.py to fix them. Focus on the most obvious issues first."""
-
-        # Use LLMWorker with screenshots
-        self._self_review_worker = LLMWorker(
-            self.llm, review_prompt, "", [],  # No context/history needed
-            screenshot=None,  # Don't need single screenshot
-            multi_angle_screenshots=self._last_multi_angle_screenshots
+        # No force-fed screenshots — Claude reads files on-demand via Read tool
+        self._review_worker = LLMWorker(
+            self.llm, review_prompt, "", [],
+            multi_angle_screenshots=[]
         )
-        self._self_review_worker.finished.connect(self._on_self_review_response)
-        self._self_review_worker.error.connect(self._on_self_review_error)
-        self._self_review_worker.start()
+        self._review_worker.finished.connect(self._on_review_response)
+        self._review_worker.error.connect(self._on_review_error)
+        self._review_worker.start()
 
-    def _on_self_review_response(self, response: str):
-        """Handle response from self-review request.
-
-        Args:
-            response: Claude's review response
-        """
+    def _on_review_response(self, response: str):
+        """Handle response from on-demand review."""
         self._chat.hide_typing()
 
-        # Log the self-review
-        ActivityLogger.log_llm_response(f"[Self-Review] {response}", session_id=self.session_manager.get_current_session_id())
+        ActivityLogger.log_llm_response(
+            f"[On-Demand Review] {response}",
+            session_id=self.session_manager.get_current_session_id()
+        )
 
-        # Check if Claude is satisfied
         if "LOOKS_GOOD" in response.upper():
-            FreeCAD.Console.PrintMessage("AIAssistant: Self-review passed, showing result\n")
-            self._self_review_attempt = 0
-            self._show_change_result(self._self_review_change_set)
-            self._self_review_change_set = None
+            FreeCAD.Console.PrintMessage("DrawingAssistant: Review passed\n")
+            self._review_attempt = 0
+            self._show_change_result(self._review_change_set)
+            self._review_change_set = None
             return
 
-        # Claude found issues - check if it edited source.py
         if getattr(self.llm, 'source_was_edited', False):
             FreeCAD.Console.PrintMessage(
-                f"AIAssistant: Self-review found issues, Claude edited source.py. Re-executing...\n"
+                "DrawingAssistant: Review found issues, Claude edited pages. Re-executing...\n"
             )
 
-            # Re-execute source.py
-            source_content = SourceManager.read_source()
-
-            # Clear document for clean re-execution (reverse order to avoid
-            # SIGSEGV from dangling links when TechDraw objects are present)
             doc = FreeCAD.ActiveDocument
             if doc:
-                objects_to_remove = [
-                    obj.Name for obj in reversed(doc.Objects)
-                    if obj.TypeId not in ("App::Origin", "App::Plane", "App::Line")
-                ]
-                for obj_name in objects_to_remove:
-                    try:
-                        doc.removeObject(obj_name)
-                    except Exception:
-                        pass
+                _clear_objects(doc)
 
-            # Execute
-            success, message, warnings = CodeExecutor.execute(source_content)
+            page_paths = SourceManager.list_pages()
+            success, message, warnings = CodeExecutor.execute_pages(page_paths)
             if warnings:
                 self._last_execution_warnings.extend(warnings)
 
             if success:
-                # Capture new screenshots
-                self._capture_multi_angle_screenshots()
-
-                # Create new change set
                 after_snapshot = SnapshotManager.capture_current_state()
                 change_set = ChangeDetector.detect_changes({}, after_snapshot, code="")
                 change_set.execution_success = True
-                change_set.execution_message = "Re-executed after self-review fix"
+                change_set.execution_message = "Re-executed after review fix"
 
-                # Run self-review again
-                self._run_self_review(change_set)
+                # Regenerate review kit for next iteration
+                if self._project_dir:
+                    self._last_review_kit = generate_review_kit(
+                        change_set, self._project_dir
+                    )
+
+                self._run_on_demand_review(change_set)
             else:
-                # Execution failed after fix - show error
-                self._self_review_attempt = 0
+                self._review_attempt = 0
                 self._last_execution_error = message
-                self._chat.add_error_message(f"Self-review fix failed: {message}")
+                self._chat.add_error_message(f"Review fix failed: {message}")
         else:
-            # Claude didn't edit source.py - show original result with Claude's feedback
             FreeCAD.Console.PrintMessage(
-                "AIAssistant: Self-review found issues but Claude didn't fix. Showing result with feedback.\n"
+                "DrawingAssistant: Review found issues but Claude didn't fix. Showing result.\n"
             )
-            self._self_review_attempt = 0
-            self._show_change_result(self._self_review_change_set)
-            # Add Claude's feedback as a follow-up message
-            self._chat.add_system_message(f"Self-review note: {response[:200]}...")
-            self._self_review_change_set = None
+            self._review_attempt = 0
+            self._show_change_result(self._review_change_set)
+            self._chat.add_system_message(f"Review note: {response[:200]}...")
+            self._review_change_set = None
 
-    def _on_self_review_error(self, error_msg: str):
-        """Handle error from self-review request."""
-        FreeCAD.Console.PrintWarning(f"AIAssistant: Self-review failed: {error_msg}\n")
+    def _on_review_error(self, error_msg: str):
+        """Handle error from on-demand review."""
+        FreeCAD.Console.PrintWarning(f"DrawingAssistant: Review failed: {error_msg}\n")
         self._chat.hide_typing()
-        self._self_review_attempt = 0
-        # Fall back to showing result without review
-        if self._self_review_change_set:
-            self._show_change_result(self._self_review_change_set)
-            self._self_review_change_set = None
+        self._review_attempt = 0
+        if self._review_change_set:
+            self._show_change_result(self._review_change_set)
+            self._review_change_set = None
 
     def _show_change_result(self, change_set):
-        """Show the change result to the user.
-
-        Args:
-            change_set: The ChangeSet to display
-        """
+        """Show the change result to the user."""
         if change_set.is_empty():
             self._chat.add_system_message("Code executed successfully (no object changes)")
         else:
             self._chat.add_change_message(change_set)
 
-    def _capture_multi_angle_screenshots(self) -> list:
-        """Capture screenshots from multiple angles and save to project folder.
-
-        Captures isometric, front, right, and top views. Saves to project
-        screenshots/ folder as latest_*.png (renaming previous to before_*).
-
-        The view is changed temporarily and restored after capture, so the user
-        doesn't see the viewport moving around.
-
-        Returns:
-            List of file paths to saved screenshots, or empty list on failure
-        """
-        results = []
-
-        try:
-            if not FreeCADGui.ActiveDocument:
-                return []
-
-            view = FreeCADGui.ActiveDocument.ActiveView
-            if not hasattr(view, "saveImage"):
-                return []
-
-            # Views to capture: (method_name, display_name)
-            views = [
-                ("viewIsometric", "isometric"),
-                ("viewFront", "front"),
-                ("viewRight", "right"),
-                ("viewTop", "top"),
-            ]
-
-            # Create screenshots directory in project folder
-            if not self._project_dir:
-                FreeCAD.Console.PrintWarning(
-                    "AIAssistant: No project directory, skipping multi-angle screenshots\n"
-                )
-                return []
-
-            screenshots_dir = Path(self._project_dir) / "screenshots"
-            screenshots_dir.mkdir(parents=True, exist_ok=True)
-
-            # Save current camera state to restore after screenshots
-            saved_camera = None
-            if hasattr(view, "getCamera"):
-                saved_camera = view.getCamera()
-
-            # Disable animation for instant view changes
-            if hasattr(view, "setAnimationEnabled"):
-                view.setAnimationEnabled(False)
-
-            try:
-                for method_name, display_name in views:
-                    try:
-                        # Set view orientation
-                        getattr(view, method_name)()
-                        view.fitAll()
-
-                        # Force full GUI update before capturing
-                        FreeCADGui.updateGui()
-
-                        # Save as latest_*.png (overwrites if exists)
-                        filepath = screenshots_dir / f"latest_{display_name}.png"
-                        view.saveImage(str(filepath), 800, 600)
-                        results.append(str(filepath))
-                        FreeCAD.Console.PrintMessage(
-                            f"AIAssistant: Saved {filepath.name}\n"
-                        )
-
-                    except Exception as e:
-                        FreeCAD.Console.PrintWarning(
-                            f"AIAssistant: Failed to capture {display_name} view: {e}\n"
-                        )
-            finally:
-                # Restore original camera state
-                if saved_camera and hasattr(view, "setCamera"):
-                    view.setCamera(saved_camera)
-                    FreeCADGui.updateGui()
-
-                # Re-enable animation
-                if hasattr(view, "setAnimationEnabled"):
-                    view.setAnimationEnabled(True)
-
-            # Store for context
-            self._last_multi_angle_screenshots = results
-
-            return results
-
-        except Exception as e:
-            FreeCAD.Console.PrintWarning(f"AIAssistant: Multi-angle capture failed: {e}\n")
-            return []
-
     # =========================================================================
-    # Sandbox Self-Review (New Flow: Self-review before user approval)
+    # Sandbox Self-Review
     # =========================================================================
-
-    def _capture_sandbox_screenshots(self, sandbox_doc_name: str) -> list:
-        """Capture multi-angle screenshots from sandbox document.
-
-        Temporarily switches to sandbox document, captures screenshots,
-        then restores the original active document. Screenshots are named
-        latest_{view}.png and overwrite previous captures.
-
-        Args:
-            sandbox_doc_name: Name of the sandbox document to capture from
-
-        Returns:
-            List of file paths to saved screenshots
-        """
-        results = []
-
-        # Save current state
-        original_doc = FreeCAD.ActiveDocument
-        original_gui_doc = FreeCADGui.ActiveDocument
-
-        try:
-            # Get sandbox document
-            sandbox_doc = FreeCAD.getDocument(sandbox_doc_name)
-            if not sandbox_doc:
-                FreeCAD.Console.PrintWarning(
-                    f"AIAssistant: Sandbox doc {sandbox_doc_name} not found\n"
-                )
-                return []
-
-            # Switch to sandbox
-            FreeCAD.setActiveDocument(sandbox_doc_name)
-            FreeCADGui.setActiveDocument(sandbox_doc_name)
-            FreeCADGui.updateGui()
-
-            gui_doc = FreeCADGui.getDocument(sandbox_doc_name)
-            if not gui_doc or not gui_doc.ActiveView:
-                FreeCAD.Console.PrintWarning(
-                    "AIAssistant: No GUI view for sandbox document\n"
-                )
-                return []
-
-            view = gui_doc.ActiveView
-            if not hasattr(view, "saveImage"):
-                return []
-
-            # Views to capture: (method_name, view_name)
-            views = [
-                ("viewIsometric", "isometric"),
-                ("viewFront", "front"),
-                ("viewRight", "right"),
-                ("viewTop", "top"),
-            ]
-
-            # Create screenshots directory
-            if not self._project_dir:
-                return []
-
-            screenshots_dir = Path(self._project_dir) / "screenshots"
-            screenshots_dir.mkdir(parents=True, exist_ok=True)
-
-            # Save camera state
-            saved_camera = None
-            if hasattr(view, "getCamera"):
-                saved_camera = view.getCamera()
-
-            if hasattr(view, "setAnimationEnabled"):
-                view.setAnimationEnabled(False)
-
-            try:
-                for method_name, view_name in views:
-                    try:
-                        getattr(view, method_name)()
-                        view.fitAll()
-                        FreeCADGui.updateGui()
-
-                        filepath = screenshots_dir / f"latest_{view_name}.png"
-                        view.saveImage(str(filepath), 800, 600)
-                        results.append(str(filepath))
-                        FreeCAD.Console.PrintMessage(
-                            f"AIAssistant: Saved {filepath.name}\n"
-                        )
-                    except Exception as e:
-                        FreeCAD.Console.PrintWarning(
-                            f"AIAssistant: Failed capture {view_name}: {e}\n"
-                        )
-            finally:
-                if saved_camera and hasattr(view, "setCamera"):
-                    view.setCamera(saved_camera)
-                if hasattr(view, "setAnimationEnabled"):
-                    view.setAnimationEnabled(True)
-
-            return results
-
-        except Exception as e:
-            FreeCAD.Console.PrintWarning(
-                f"AIAssistant: Sandbox screenshot capture failed: {e}\n"
-            )
-            return []
-
-        finally:
-            # Restore original document
-            if original_doc:
-                try:
-                    FreeCAD.setActiveDocument(original_doc.Name)
-                except Exception:
-                    pass
-            if original_gui_doc:
-                try:
-                    FreeCADGui.setActiveDocument(original_gui_doc.Name)
-                    FreeCADGui.updateGui()
-                except Exception:
-                    pass
 
     def _run_sandbox_self_review(self):
-        """Run self-review with screenshots from sandbox document.
-
-        This is the new flow where self-review happens BEFORE user approval.
-        Claude reviews the sandbox result and can iterate to fix issues.
-        """
+        """Run on-demand review for sandbox document."""
         if not self._sandbox_session or not self._sandbox_session.is_active:
             FreeCAD.Console.PrintWarning(
-                "AIAssistant: No active sandbox session for self-review\n"
+                "DrawingAssistant: No active sandbox session for self-review\n"
             )
             self._finalize_sandbox_preview()
             return
 
-        # Check iteration limit
         if self._sandbox_session.iteration >= self._sandbox_session.max_iterations:
             FreeCAD.Console.PrintMessage(
-                f"AIAssistant: Sandbox self-review max iterations reached, showing preview\n"
+                "DrawingAssistant: Sandbox self-review max iterations reached, showing preview\n"
             )
             self._finalize_sandbox_preview()
             return
 
         FreeCAD.Console.PrintMessage(
-            f"AIAssistant: Running sandbox self-review (iteration {self._sandbox_session.iteration + 1})...\n"
+            f"DrawingAssistant: Running sandbox review "
+            f"(iteration {self._sandbox_session.iteration + 1})...\n"
         )
         self._chat.show_typing()
         self._chat.set_progress_reviewing()
 
-        # Capture screenshots from sandbox
-        screenshots = self._capture_sandbox_screenshots(
-            self._sandbox_session.sandbox_doc_name
-        )
+        # Generate review kit for the sandbox document state
+        if self._project_dir:
+            # Temporarily activate sandbox doc to capture its objects
+            main_doc_name = None
+            sandbox_doc_name = self._sandbox_session.sandbox_doc_name
+            if sandbox_doc_name and FreeCAD.getDocument(sandbox_doc_name):
+                main_doc_name = FreeCAD.ActiveDocument.Name if FreeCAD.ActiveDocument else None
+                FreeCAD.setActiveDocument(sandbox_doc_name)
 
-        if not screenshots:
-            FreeCAD.Console.PrintWarning(
-                "AIAssistant: No sandbox screenshots, skipping self-review\n"
-            )
-            self._chat.hide_typing()
-            self._finalize_sandbox_preview()
-            return
+            after_snapshot = SnapshotManager.capture_current_state()
+            sandbox_change_set = ChangeDetector.detect_changes(None, after_snapshot, code="")
 
-        # Build review prompt - be specific about common issues
-        review_prompt = """Review these screenshots of the 3D model I just created. Check all angles carefully.
+            # Restore main doc as active
+            if main_doc_name and FreeCAD.getDocument(main_doc_name):
+                FreeCAD.setActiveDocument(main_doc_name)
 
-CRITICAL CHECKS:
-1. **Roofs**: If a pitched/gable roof was requested, verify it's NOT flat. Gable roofs should have:
-   - Two sloped faces meeting at a ridge
-   - Triangular gable ends visible from the side
-   - If the roof looks flat or barely rises, the Runs property is likely missing/wrong
+            kit = generate_review_kit(sandbox_change_set, self._project_dir)
+            review_prompt = format_review_prompt(kit)
+        else:
+            review_prompt = "Review the current drawing state. Respond with LOOKS_GOOD if correct or explain issues."
 
-2. **Walls**: Should form complete enclosure. Check corners connect properly.
-
-3. **Openings**: Doors/windows should cut through walls, not float or overlap.
-
-4. **Proportions**: Does the overall shape match what was requested? Check height vs width ratios.
-
-5. **General**: Missing parts, floating objects, Z-fighting (flickering), holes.
-
-REMEMBER: A flat roof when user asked for pitched/gable roof is a MAJOR BUG - fix by setting roof.Runs property.
-
-If it looks correct: Start your response with [APPROVED] then describe what you see.
-
-If there are problems: Explain what's wrong and edit source.py to fix them."""
-
-        # Send to Claude with sandbox screenshots
         self._sandbox_review_worker = LLMWorker(
             self.llm, review_prompt, "", [],
-            screenshot=None,
-            multi_angle_screenshots=screenshots
+            multi_angle_screenshots=[]
         )
         self._sandbox_review_worker.finished.connect(self._on_sandbox_review_response)
         self._sandbox_review_worker.error.connect(self._on_sandbox_review_error)
         self._sandbox_review_worker.start()
 
     def _on_sandbox_review_response(self, response: str):
-        """Handle response from sandbox self-review.
-
-        If Claude approves ([APPROVED] marker), show preview to user.
-        If Claude edited source.py, re-execute in sandbox and loop.
-        """
+        """Handle response from sandbox review."""
         self._chat.hide_typing()
 
-        # Log the review
         ActivityLogger.log_llm_response(
-            f"[Sandbox Self-Review] {response}",
+            f"[Sandbox Review] {response}",
             session_id=self.session_manager.get_current_session_id()
         )
 
-        # Check if Claude approved (look for [APPROVED] marker)
-        is_approved = "[APPROVED]" in response.upper()
-
-        # Strip the marker from displayed response
-        display_response = response.replace("[APPROVED]", "").replace("[approved]", "").strip()
+        is_approved = "LOOKS_GOOD" in response.upper()
+        display_response = response.replace("LOOKS_GOOD", "").replace("looks_good", "").strip()
         self._sandbox_review_response = display_response
 
         if is_approved:
             FreeCAD.Console.PrintMessage(
-                "AIAssistant: Self-review passed, showing preview to user\n"
+                "DrawingAssistant: Sandbox review passed, showing preview to user\n"
             )
             self._finalize_sandbox_preview()
             return
 
-        # Check if Claude edited source.py
         if getattr(self.llm, 'source_was_edited', False):
             FreeCAD.Console.PrintMessage(
-                "AIAssistant: Claude edited source.py during sandbox review, re-executing...\n"
+                "DrawingAssistant: Claude edited pages during sandbox review, re-executing...\n"
             )
 
-            # Re-read edited source
-            new_source = SourceManager.read_source()
-
-            # Re-execute in sandbox
+            new_source = SourceManager.read_all_pages()
             success, error_msg = self._preview_manager.re_execute_in_sandbox(
                 self._sandbox_session, new_source
             )
 
             if success:
-                # Loop - run another self-review iteration
                 self._run_sandbox_self_review()
             else:
-                # Execution failed - request fix
                 FreeCAD.Console.PrintWarning(
-                    f"AIAssistant: Sandbox re-execution failed: {error_msg[:100]}...\n"
+                    f"DrawingAssistant: Sandbox re-execution failed: {error_msg[:100]}...\n"
                 )
-                # For now, show current state to user
                 self._finalize_sandbox_preview()
         else:
-            # Claude found issues but didn't fix - show current result
             FreeCAD.Console.PrintMessage(
-                "AIAssistant: Claude noted issues but didn't edit, showing preview\n"
+                "DrawingAssistant: Claude noted issues but didn't edit, showing preview\n"
             )
             self._finalize_sandbox_preview()
 
     def _on_sandbox_review_error(self, error_msg: str):
-        """Handle error from sandbox self-review request."""
+        """Handle error from sandbox review request."""
         FreeCAD.Console.PrintWarning(
-            f"AIAssistant: Sandbox self-review failed: {error_msg}\n"
+            f"DrawingAssistant: Sandbox review failed: {error_msg}\n"
         )
         self._chat.hide_typing()
-        # Fall back to showing preview without review
         self._finalize_sandbox_preview()
 
     def _finalize_sandbox_preview(self):
-        """Self-review complete - create preview and show to user.
-
-        This is called after Claude says LOOKS_GOOD or max iterations reached.
-        Creates green preview shapes from sandbox and shows approval widget.
-        """
+        """Self-review complete - create preview and show to user."""
         if not self._sandbox_session:
             FreeCAD.Console.PrintWarning(
-                "AIAssistant: No sandbox session to finalize\n"
+                "DrawingAssistant: No sandbox session to finalize\n"
             )
             return
 
-        # Create preview shapes in main doc from sandbox
         success = self._preview_manager.commit_sandbox_to_preview(self._sandbox_session)
 
-        if not success:
-            FreeCAD.Console.PrintWarning(
-                "AIAssistant: Failed to create preview from sandbox\n"
-            )
-            # Clean up and show error
-            self._preview_manager.close_sandbox(self._sandbox_session)
-            self._sandbox_session = None
-            self._chat.add_error_message("Failed to create preview")
-            return
+        if success:
+            preview_items = self._preview_manager.get_preview_summary()
+        else:
+            # 2D objects (TechDraw/Draft groups) have no Part shapes for 3D green
+            # preview, but sandbox ran fine. Get object list from sandbox directly.
+            # Approve handler reads pages from disk (SourceManager), not from
+            # _pending_code, so no need to set it here.
+            preview_items = self._preview_manager.get_sandbox_summary(self._sandbox_session)
 
-        # Close sandbox (preview shapes are now in main doc)
         self._preview_manager.close_sandbox(self._sandbox_session)
 
-        # Get preview summary
-        preview_items = self._preview_manager.get_preview_summary()
+        source_content = self._sandbox_session.source_content
 
         FreeCAD.Console.PrintMessage(
-            f"AIAssistant: Sandbox preview finalized with {len(preview_items)} objects\n"
+            f"DrawingAssistant: Sandbox preview finalized with {len(preview_items)} objects\n"
         )
 
-        # Check if auto-accept is enabled
         auto_approve = self.auto_accept_action.isChecked()
 
-        # Show preview widget to user (no tool_calls - self-review is internal)
         self._chat.add_preview_message(
-            description=self._sandbox_review_response or "Source.py modified",
+            description=self._sandbox_review_response or "Page files modified",
             preview_items=preview_items,
-            code=self._sandbox_session.source_content,
+            code=source_content,
             is_deletion=False,
             auto_approve=auto_approve,
             tool_calls=None
         )
 
-        # Clean up session reference (but keep source content for approval)
         self._sandbox_session = None
 
     def closeEvent(self, event):
         """Clean up when panel is closed."""
         ActivityLogger.log_panel_closed()
-        # Stop the console observer
         ContextBuilder.stop_console_observer()
         super().closeEvent(event)
