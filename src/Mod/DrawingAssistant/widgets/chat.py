@@ -465,8 +465,42 @@ class ChatWidget(QtWidgets.QWidget):
             }}
         """)
         input_frame_layout = QtWidgets.QHBoxLayout(input_frame)
-        input_frame_layout.setContentsMargins(14, 10, 10, 10)
-        input_frame_layout.setSpacing(10)
+        input_frame_layout.setContentsMargins(10, 10, 10, 10)
+        input_frame_layout.setSpacing(8)
+
+        # Attach button (paperclip icon via SVG)
+        self._attach_btn = QtWidgets.QPushButton()
+        self._attach_btn.setFixedSize(32, 32)
+        self._attach_btn.setCursor(QtCore.Qt.PointingHandCursor)
+        self._attach_btn.setToolTip("Attach image")
+        _clip_color = Theme.COLORS['text_muted']
+        _clip_svg = (
+            f'<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" '
+            f'fill="none" stroke="{_clip_color}" stroke-width="2" stroke-linecap="round" '
+            f'stroke-linejoin="round">'
+            f'<path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 '
+            f'015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/></svg>'
+        )
+        _clip_pixmap = QtGui.QPixmap(18, 18)
+        _clip_pixmap.fill(QtCore.Qt.transparent)
+        _clip_renderer = QtGui.QImage.fromData(_clip_svg.encode())
+        if not _clip_renderer.isNull():
+            _clip_pixmap = QtGui.QPixmap.fromImage(_clip_renderer)
+        self._attach_btn.setIcon(QtGui.QIcon(_clip_pixmap))
+        self._attach_btn.setIconSize(QtCore.QSize(18, 18))
+        self._attach_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: transparent;
+                border: none;
+                border-radius: 16px;
+                padding: 0;
+            }}
+            QPushButton:hover {{
+                background-color: {Theme.COLORS['bg_hover']};
+            }}
+        """)
+        self._attach_btn.clicked.connect(self._on_attach_clicked)
+        input_frame_layout.addWidget(self._attach_btn, alignment=QtCore.Qt.AlignBottom)
 
         # Text input
         self._input = QtWidgets.QTextEdit()
@@ -635,6 +669,17 @@ class ChatWidget(QtWidgets.QWidget):
         self.messageSubmitted.emit(text, images)
 
     # -- Image attachment methods --
+
+    def _on_attach_clicked(self):
+        """Open file dialog to pick an image."""
+        paths, _ = QtWidgets.QFileDialog.getOpenFileNames(
+            self, "Attach Image", "",
+            "Images (*.png *.jpg *.jpeg *.gif *.webp *.bmp);;All Files (*)",
+        )
+        for path in paths:
+            image = QtGui.QImage(path)
+            if not image.isNull():
+                self._add_image(image)
 
     def _is_supported_image(self, path: str) -> bool:
         """Check if file path is a supported image format."""
