@@ -27,6 +27,7 @@ SET(DrawingAssistant_core
     core/changes.py
     core/executor.py
     core/preview.py
+    core/review_kit.py
 )
 
 # Session and logging persistence

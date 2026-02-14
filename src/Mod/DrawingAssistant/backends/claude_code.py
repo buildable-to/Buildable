@@ -447,14 +447,13 @@ class ClaudeCodeBackend:
             parts.append(f"## Document State\n{context}")
             parts.append("")
 
-        # Screenshots (TechDraw sheet PNGs)
+        # Top view screenshot (for visual context on user requests)
         if multi_angle_screenshots:
-            parts.append("### Current screenshots:")
+            parts.append("### Current state:")
             for path in multi_angle_screenshots:
                 filename = Path(path).name
-                if filename.startswith("latest_sheet_"):
-                    sheet_label = filename.replace("latest_sheet_", "").replace(".png", "").replace("_", " ")
-                    parts.append(f'- Sheet "{sheet_label}" (printed drawing page): {path}')
+                if "review_top" in filename:
+                    parts.append(f"- Top view (Draft geometry): {path}")
                 else:
                     parts.append(f"- {filename}: {path}")
             parts.append("")

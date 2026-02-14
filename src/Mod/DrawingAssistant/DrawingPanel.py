@@ -24,6 +24,7 @@ from .core import snapshot as SnapshotManager
 from .core import changes as ChangeDetector
 from .core import source as SourceManager
 from .core.preview import PreviewManager, SandboxReviewSession
+from .core.review_kit import ReviewKit, generate_review_kit, format_review_prompt
 from .persistence import activity as ActivityLogger
 from .persistence.session import SessionManager
 from .widgets.chat import ChatWidget
@@ -32,66 +33,6 @@ from .widgets.context_selection import ContextSelectionWidget
 
 # Maximum attempts to auto-fix code that fails preview
 MAX_FIX_ATTEMPTS = 3
-
-def _svg_to_png(svg_path: str, png_path: str, width: int = 2000) -> bool:
-    """Render an SVG to PNG, stripping FreeCAD's custom namespaces first.
-
-    Qt's QSvgRenderer chokes on custom namespace attributes
-    (freecad:editable, inkscape:label, etc.).  Stripping them is safe —
-    they are metadata, not rendering instructions.
-    """
-    try:
-        from PySide6 import QtSvg
-    except ImportError:
-        FreeCAD.Console.PrintWarning(
-            "DrawingAssistant: PySide6.QtSvg not available, skipping sheet PNG\n"
-        )
-        return False
-
-    try:
-        with open(svg_path, "r", encoding="utf-8") as f:
-            svg_text = f.read()
-
-        # Strip namespace declarations and prefixed attributes that
-        # QSvgRenderer cannot handle.
-        svg_text = re.sub(
-            r'\s+xmlns:(?:freecad|inkscape|sodipodi|dc|cc|rdf)="[^"]*"',
-            "", svg_text,
-        )
-        svg_text = re.sub(
-            r'\s+(?:freecad|inkscape|sodipodi|dc|cc|rdf):\w+(?::\w+)*="[^"]*"',
-            "", svg_text,
-        )
-
-        renderer = QtSvg.QSvgRenderer(svg_text.encode("utf-8"))
-        if not renderer.isValid():
-            FreeCAD.Console.PrintWarning(
-                f"DrawingAssistant: QSvgRenderer invalid for {svg_path}\n"
-            )
-            return False
-
-        svg_size = renderer.defaultSize()
-        if svg_size.width() <= 0:
-            return False
-        height = int(width * svg_size.height() / svg_size.width())
-
-        image = QtGui.QImage(
-            QtCore.QSize(width, height), QtGui.QImage.Format_ARGB32
-        )
-        image.fill(QtCore.Qt.white)
-        painter = QtGui.QPainter(image)
-        painter.setRenderHint(QtGui.QPainter.Antialiasing)
-        painter.setRenderHint(QtGui.QPainter.TextAntialiasing)
-        renderer.render(painter)
-        painter.end()
-
-        return image.save(png_path, "PNG")
-    except Exception as e:
-        FreeCAD.Console.PrintWarning(
-            f"DrawingAssistant: SVG→PNG failed: {e}\n"
-        )
-        return False
-
 
 def _close_techdraw_mdi_tabs():
     """Close TechDraw MDI tabs before object deletion.
@@ -147,13 +88,6 @@ def _clear_objects(doc, object_names=None):
     FreeCAD.Console.PrintMessage(
         f"DrawingAssistant: Cleared {removed} objects ({scope})\n"
     )
-
-
-def _find_techdraw_pages(doc) -> list:
-    """Return all TechDraw::DrawPage objects in the document."""
-    if not doc:
-        return []
-    return [obj for obj in doc.Objects if obj.TypeId == "TechDraw::DrawPage"]
 
 
 class LLMWorker(QtCore.QThread):
@@ -214,13 +148,13 @@ class DrawingAssistantDockWidget(QtWidgets.QDockWidget):
         self._last_code = ""
         self._last_execution_warnings = []  # Warnings from last code execution
         self._last_execution_error = None  # Error message from last failed execution
-        self._last_multi_angle_screenshots = []  # Paths to multi-angle screenshots
+        self._last_review_kit: ReviewKit = None  # On-demand review files
 
         # Self-review state
-        self._self_review_worker = None
-        self._self_review_attempt = 0
-        self._self_review_change_set = None
-        self._max_self_review_attempts = 2
+        self._review_worker = None
+        self._review_attempt = 0
+        self._review_change_set = None
+        self._max_review_attempts = 2
 
         # Sandbox self-review state
         self._sandbox_session: SandboxReviewSession = None
@@ -759,13 +693,13 @@ Do NOT write any code. Only output the numbered plan steps."""
 
             self.worker = LLMWorker(
                 self.llm, plan_prompt, context, conversation,
-                self._last_multi_angle_screenshots
+                self._get_top_view_screenshots()
             )
         else:
             # Normal mode: request code directly
             self.worker = LLMWorker(
                 self.llm, user_input, context, conversation,
-                self._last_multi_angle_screenshots
+                self._get_top_view_screenshots()
             )
 
         self.worker.finished.connect(self._on_response)
@@ -1264,15 +1198,13 @@ Read the relevant page file to understand what went wrong, then fix it."""
             if success:
                 SourceManager.clear_backup()
 
-                self._capture_multi_angle_screenshots()
-
                 change_set = ChangeDetector.detect_changes(
                     before_snapshot, after_snapshot, code=""
                 )
                 change_set.execution_success = success
                 change_set.execution_message = message
 
-                self._show_change_result(change_set)
+                self._generate_and_maybe_review(change_set)
             else:
                 FreeCAD.Console.PrintError(
                     f"DrawingAssistant: Drawing execution failed: {message}\n"
@@ -1456,7 +1388,7 @@ Return ONLY the Python code in a ```python code block."""
 
         self._plan_worker = LLMWorker(
             self.llm, code_prompt, context, conversation,
-            self._last_multi_angle_screenshots
+            self._get_top_view_screenshots()
         )
         self._plan_worker.finished.connect(self._on_plan_code_response)
         self._plan_worker.error.connect(self._on_error)
@@ -1515,10 +1447,7 @@ Return ONLY the Python code in a ```python code block."""
         change_set.execution_message = message
 
         if success:
-            self._capture_multi_angle_screenshots()
-
-            self._self_review_attempt = 0
-            self._run_self_review(change_set)
+            self._generate_and_maybe_review(change_set)
         else:
             self._last_execution_error = message
             self._chat.add_error_message(f"Execution error: {message}")
@@ -1633,119 +1562,125 @@ Return ONLY the Python code in a ```python code block."""
             if not SourceManager.exists():
                 SourceManager.init_pages_dir()
 
-    def _run_self_review(self, change_set):
-        """Run self-review loop for 2D drawing results."""
-        if not self.self_review_action.isChecked():
-            self._show_change_result(change_set)
-            return
+    # =========================================================================
+    # On-Demand Review System
+    # =========================================================================
 
-        if not self._last_multi_angle_screenshots:
-            FreeCAD.Console.PrintWarning(
-                "DrawingAssistant: No screenshots for self-review, skipping\n"
+    def _get_top_view_screenshots(self) -> list:
+        """Return the top view screenshot path as a list (for LLMWorker compat)."""
+        if self._last_review_kit and self._last_review_kit.top_view_path:
+            return [self._last_review_kit.top_view_path]
+        return []
+
+    def _generate_and_maybe_review(self, change_set):
+        """Generate review kit and optionally run on-demand self-review."""
+        if self._project_dir:
+            self._last_review_kit = generate_review_kit(
+                change_set, self._project_dir
             )
-            self._show_change_result(change_set)
-            return
+        else:
+            self._last_review_kit = None
 
-        self._self_review_attempt += 1
-        if self._self_review_attempt > self._max_self_review_attempts:
+        if self.self_review_action.isChecked() and self._last_review_kit:
+            self._review_attempt = 0
+            self._run_on_demand_review(change_set)
+        else:
+            self._show_change_result(change_set)
+
+    def _run_on_demand_review(self, change_set):
+        """Run on-demand self-review — Claude reads files as needed via Read tool."""
+        self._review_attempt += 1
+        if self._review_attempt > self._max_review_attempts:
             FreeCAD.Console.PrintMessage(
-                f"DrawingAssistant: Max self-review attempts ({self._max_self_review_attempts}) reached\n"
+                f"DrawingAssistant: Max review attempts ({self._max_review_attempts}) reached\n"
             )
-            self._self_review_attempt = 0
+            self._review_attempt = 0
             self._show_change_result(change_set)
             return
 
-        self._self_review_change_set = change_set
+        self._review_change_set = change_set
 
         FreeCAD.Console.PrintMessage(
-            f"DrawingAssistant: Running self-review (attempt {self._self_review_attempt})...\n"
+            f"DrawingAssistant: Running on-demand review (attempt {self._review_attempt})...\n"
         )
         self._chat.show_typing()
         self._chat.set_progress_reviewing()
 
-        review_prompt = """I just executed code that modified the 2D drawing. Please review the screenshots.
+        review_prompt = format_review_prompt(self._last_review_kit)
 
-IMPORTANT: Check carefully for:
-- Draft wires/shapes positioned correctly
-- Dimensions showing correct values and properly placed
-- Text labels readable and in correct positions
-- Grid lines aligned properly
-- Missing or overlapping geometry
-- TechDraw page layout issues (if applicable)
-
-If the result looks CORRECT, respond with just: "LOOKS_GOOD"
-
-If there are PROBLEMS, explain briefly what's wrong and edit the relevant page file to fix them."""
-
-        self._self_review_worker = LLMWorker(
+        # No force-fed screenshots — Claude reads files on-demand via Read tool
+        self._review_worker = LLMWorker(
             self.llm, review_prompt, "", [],
-            multi_angle_screenshots=self._last_multi_angle_screenshots
+            multi_angle_screenshots=[]
         )
-        self._self_review_worker.finished.connect(self._on_self_review_response)
-        self._self_review_worker.error.connect(self._on_self_review_error)
-        self._self_review_worker.start()
+        self._review_worker.finished.connect(self._on_review_response)
+        self._review_worker.error.connect(self._on_review_error)
+        self._review_worker.start()
 
-    def _on_self_review_response(self, response: str):
-        """Handle response from self-review request."""
+    def _on_review_response(self, response: str):
+        """Handle response from on-demand review."""
         self._chat.hide_typing()
 
         ActivityLogger.log_llm_response(
-            f"[Self-Review] {response}",
+            f"[On-Demand Review] {response}",
             session_id=self.session_manager.get_current_session_id()
         )
 
         if "LOOKS_GOOD" in response.upper():
-            FreeCAD.Console.PrintMessage("DrawingAssistant: Self-review passed\n")
-            self._self_review_attempt = 0
-            self._show_change_result(self._self_review_change_set)
-            self._self_review_change_set = None
+            FreeCAD.Console.PrintMessage("DrawingAssistant: Review passed\n")
+            self._review_attempt = 0
+            self._show_change_result(self._review_change_set)
+            self._review_change_set = None
             return
 
         if getattr(self.llm, 'source_was_edited', False):
             FreeCAD.Console.PrintMessage(
-                "DrawingAssistant: Self-review found issues, Claude edited pages. Re-executing...\n"
+                "DrawingAssistant: Review found issues, Claude edited pages. Re-executing...\n"
             )
 
             doc = FreeCAD.ActiveDocument
             if doc:
                 _clear_objects(doc)
 
-            # Full rebuild with tracking (self-review has no backup to diff)
             page_paths = SourceManager.list_pages()
             success, message, warnings = CodeExecutor.execute_pages(page_paths)
             if warnings:
                 self._last_execution_warnings.extend(warnings)
 
             if success:
-                self._capture_multi_angle_screenshots()
-
                 after_snapshot = SnapshotManager.capture_current_state()
                 change_set = ChangeDetector.detect_changes({}, after_snapshot, code="")
                 change_set.execution_success = True
-                change_set.execution_message = "Re-executed after self-review fix"
+                change_set.execution_message = "Re-executed after review fix"
 
-                self._run_self_review(change_set)
+                # Regenerate review kit for next iteration
+                if self._project_dir:
+                    self._last_review_kit = generate_review_kit(
+                        change_set, self._project_dir
+                    )
+
+                self._run_on_demand_review(change_set)
             else:
-                self._self_review_attempt = 0
+                self._review_attempt = 0
                 self._last_execution_error = message
-                self._chat.add_error_message(f"Self-review fix failed: {message}")
+                self._chat.add_error_message(f"Review fix failed: {message}")
         else:
             FreeCAD.Console.PrintMessage(
-                "DrawingAssistant: Self-review found issues but Claude didn't fix. Showing result.\n"
+                "DrawingAssistant: Review found issues but Claude didn't fix. Showing result.\n"
             )
-            self._self_review_attempt = 0
-            self._show_change_result(self._self_review_change_set)
-            self._chat.add_system_message(f"Self-review note: {response[:200]}...")
-            self._self_review_change_set = None
+            self._review_attempt = 0
+            self._show_change_result(self._review_change_set)
+            self._chat.add_system_message(f"Review note: {response[:200]}...")
+            self._review_change_set = None
 
-    def _on_self_review_error(self, error_msg: str):
-        """Handle error from self-review request."""
-        FreeCAD.Console.PrintWarning(f"DrawingAssistant: Self-review failed: {error_msg}\n")
+    def _on_review_error(self, error_msg: str):
+        """Handle error from on-demand review."""
+        FreeCAD.Console.PrintWarning(f"DrawingAssistant: Review failed: {error_msg}\n")
         self._chat.hide_typing()
-        self._self_review_attempt = 0
-        if self._self_review_change_set:
-            self._show_change_result(self._self_review_change_set)
-            self._self_review_change_set = None
+        self._review_attempt = 0
+        if self._review_change_set:
+            self._show_change_result(self._review_change_set)
+            self._review_change_set = None
 
     def _show_change_result(self, change_set):
         """Show the change result to the user."""
@@ -1754,138 +1689,12 @@ If there are PROBLEMS, explain briefly what's wrong and edit the relevant page f
         else:
             self._chat.add_change_message(change_set)
 
-    def _capture_techdraw_screenshots(self, doc=None, screenshots_dir=None) -> list:
-        """Export each TechDraw DrawPage as SVG then render to PNG.
-
-        Returns list of PNG file paths.
-        """
-        results = []
-        if doc is None:
-            doc = FreeCAD.ActiveDocument
-        if not doc:
-            return results
-
-        pages = _find_techdraw_pages(doc)
-        if not pages:
-            return results
-
-        try:
-            import TechDrawGui
-        except ImportError:
-            FreeCAD.Console.PrintWarning(
-                "DrawingAssistant: TechDrawGui not available, skipping page screenshots\n"
-            )
-            return results
-
-        if screenshots_dir is None:
-            if not self._project_dir:
-                return results
-            screenshots_dir = Path(self._project_dir) / "screenshots"
-        screenshots_dir = Path(screenshots_dir)
-        screenshots_dir.mkdir(parents=True, exist_ok=True)
-
-        for page in pages:
-            try:
-                safe_label = re.sub(r"[^\w\-]", "_", page.Label).strip("_")
-                if not safe_label:
-                    safe_label = page.Name
-
-                svg_path = str(screenshots_dir / f"_tmp_sheet_{safe_label}.svg")
-                png_path = str(screenshots_dir / f"latest_sheet_{safe_label}.png")
-
-                TechDrawGui.exportPageAsSvg(page, svg_path)
-
-                if _svg_to_png(svg_path, png_path):
-                    results.append(png_path)
-                    FreeCAD.Console.PrintMessage(
-                        f"DrawingAssistant: Captured sheet {page.Label} -> "
-                        f"latest_sheet_{safe_label}.png\n"
-                    )
-
-                # Clean up temp SVG
-                try:
-                    Path(svg_path).unlink()
-                except OSError:
-                    pass
-
-            except Exception as e:
-                FreeCAD.Console.PrintWarning(
-                    f"DrawingAssistant: Failed to capture sheet {page.Label}: {e}\n"
-                )
-
-        return results
-
-    def _capture_multi_angle_screenshots(self) -> list:
-        """Capture PNG screenshots of each TechDraw page."""
-        if not FreeCADGui.ActiveDocument or not self._project_dir:
-            return []
-
-        screenshots_dir = Path(self._project_dir) / "screenshots"
-        screenshots_dir.mkdir(parents=True, exist_ok=True)
-
-        # Clean stale files from older sessions
-        for pattern in ("latest_isometric.png", "latest_top.png"):
-            for stale in screenshots_dir.glob(pattern):
-                try:
-                    stale.unlink()
-                except OSError:
-                    pass
-
-        results = self._capture_techdraw_screenshots(
-            doc=FreeCAD.ActiveDocument, screenshots_dir=screenshots_dir
-        )
-        self._last_multi_angle_screenshots = results
-        return results
-
     # =========================================================================
     # Sandbox Self-Review
     # =========================================================================
 
-    def _capture_sandbox_screenshots(self, sandbox_doc_name: str) -> list:
-        """Capture TechDraw page screenshots from sandbox document."""
-        original_doc = FreeCAD.ActiveDocument
-        original_gui_doc = FreeCADGui.ActiveDocument
-        try:
-            sandbox_doc = FreeCAD.getDocument(sandbox_doc_name)
-            if not sandbox_doc:
-                FreeCAD.Console.PrintWarning(
-                    f"DrawingAssistant: Sandbox doc {sandbox_doc_name} not found\n"
-                )
-                return []
-
-            FreeCAD.setActiveDocument(sandbox_doc_name)
-            FreeCADGui.setActiveDocument(sandbox_doc_name)
-            FreeCADGui.updateGui()
-
-            if not self._project_dir:
-                return []
-
-            screenshots_dir = Path(self._project_dir) / "screenshots"
-            screenshots_dir.mkdir(parents=True, exist_ok=True)
-
-            return self._capture_techdraw_screenshots(
-                doc=sandbox_doc, screenshots_dir=screenshots_dir
-            )
-        except Exception as e:
-            FreeCAD.Console.PrintWarning(
-                f"DrawingAssistant: Sandbox screenshot error: {e}\n"
-            )
-            return []
-        finally:
-            if original_doc:
-                try:
-                    FreeCAD.setActiveDocument(original_doc.Name)
-                except Exception:
-                    pass
-            if original_gui_doc:
-                try:
-                    FreeCADGui.setActiveDocument(original_gui_doc.Name)
-                    FreeCADGui.updateGui()
-                except Exception:
-                    pass
-
     def _run_sandbox_self_review(self):
-        """Run self-review with screenshots from sandbox document."""
+        """Run on-demand review for sandbox document."""
         if not self._sandbox_session or not self._sandbox_session.is_active:
             FreeCAD.Console.PrintWarning(
                 "DrawingAssistant: No active sandbox session for self-review\n"
@@ -1901,62 +1710,45 @@ If there are PROBLEMS, explain briefly what's wrong and edit the relevant page f
             return
 
         FreeCAD.Console.PrintMessage(
-            f"DrawingAssistant: Running sandbox self-review "
+            f"DrawingAssistant: Running sandbox review "
             f"(iteration {self._sandbox_session.iteration + 1})...\n"
         )
         self._chat.show_typing()
         self._chat.set_progress_reviewing()
 
-        screenshots = self._capture_sandbox_screenshots(
-            self._sandbox_session.sandbox_doc_name
-        )
-
-        if not screenshots:
-            FreeCAD.Console.PrintWarning(
-                "DrawingAssistant: No sandbox screenshots, skipping self-review\n"
-            )
-            self._chat.hide_typing()
-            self._finalize_sandbox_preview()
-            return
-
-        review_prompt = """Review these screenshots of the 2D drawing I just created.
-
-CRITICAL CHECKS:
-1. **Draft geometry**: Wires, circles, and shapes should be positioned correctly
-2. **Dimensions**: Values should be correct, leaders pointing to right objects
-3. **Text/Labels**: Readable, properly positioned, no overlaps
-4. **Grid/Axes**: If present, properly aligned and labeled
-5. **TechDraw**: If a page was created, views should be placed and scaled correctly
-6. **General**: Missing elements, overlapping geometry, wrong positions
-
-If it looks correct: Start your response with [APPROVED] then describe what you see.
-
-If there are problems: Explain what's wrong and edit the relevant page file to fix them."""
+        # Generate review kit for the sandbox document state
+        if self._project_dir:
+            # Use an empty change set for sandbox (all objects are "new")
+            sandbox_change_set = ChangeDetector.detect_changes({}, {}, code="")
+            kit = generate_review_kit(sandbox_change_set, self._project_dir)
+            review_prompt = format_review_prompt(kit)
+        else:
+            review_prompt = "Review the current drawing state. Respond with [APPROVED] if correct or explain issues."
 
         self._sandbox_review_worker = LLMWorker(
             self.llm, review_prompt, "", [],
-            multi_angle_screenshots=screenshots
+            multi_angle_screenshots=[]
         )
         self._sandbox_review_worker.finished.connect(self._on_sandbox_review_response)
         self._sandbox_review_worker.error.connect(self._on_sandbox_review_error)
         self._sandbox_review_worker.start()
 
     def _on_sandbox_review_response(self, response: str):
-        """Handle response from sandbox self-review."""
+        """Handle response from sandbox review."""
         self._chat.hide_typing()
 
         ActivityLogger.log_llm_response(
-            f"[Sandbox Self-Review] {response}",
+            f"[Sandbox Review] {response}",
             session_id=self.session_manager.get_current_session_id()
         )
 
-        is_approved = "[APPROVED]" in response.upper()
+        is_approved = "[APPROVED]" in response.upper() or "LOOKS_GOOD" in response.upper()
         display_response = response.replace("[APPROVED]", "").replace("[approved]", "").strip()
         self._sandbox_review_response = display_response
 
         if is_approved:
             FreeCAD.Console.PrintMessage(
-                "DrawingAssistant: Self-review passed, showing preview to user\n"
+                "DrawingAssistant: Sandbox review passed, showing preview to user\n"
             )
             self._finalize_sandbox_preview()
             return
@@ -1985,9 +1777,9 @@ If there are problems: Explain what's wrong and edit the relevant page file to f
             self._finalize_sandbox_preview()
 
     def _on_sandbox_review_error(self, error_msg: str):
-        """Handle error from sandbox self-review request."""
+        """Handle error from sandbox review request."""
         FreeCAD.Console.PrintWarning(
-            f"DrawingAssistant: Sandbox self-review failed: {error_msg}\n"
+            f"DrawingAssistant: Sandbox review failed: {error_msg}\n"
         )
         self._chat.hide_typing()
         self._finalize_sandbox_preview()
