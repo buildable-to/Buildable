@@ -9,6 +9,14 @@ Execution order: underscore-prefixed files first, then alphabetical.
 - End each script with `doc.recompute()`
 - Coordinate system: X = right, Y = up (2D plan view)
 
+## File Organization
+ALWAYS edit an existing file when new content belongs to the same drawing group. Do NOT create a new file per prompt.
+- Grid lines, columns, beams, and dimensions on the same plan = ONE file
+- Multiple views of the same structural element (top, side, bottom) = ONE file
+- TechDraw sheet setup = ONE file
+
+Only create a new file when the user explicitly asks for a separate drawing or the content is a genuinely different group (e.g., plan vs cross-section detail).
+
 ## Drawing Tools
 - **Draft**: make_wire, make_circle, make_rectangle, make_text, make_label, make_linear_dimension, make_hatch
 - **TechDraw**: DrawPage + DrawSVGTemplate for sheets, DrawViewDraft for placing Draft views

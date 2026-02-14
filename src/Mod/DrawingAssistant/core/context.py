@@ -283,7 +283,12 @@ def _describe_console_errors(errors) -> str:
 
 
 def _get_pages_context() -> str:
-    """Get summary of drawing pages in pages/ directory."""
+    """Get summary of drawing pages in pages/ directory.
+
+    Shows per file: name, line count, tags (TechDraw/Spreadsheet/Draft count),
+    first comment, group names, and label prefixes.  This helps Claude decide
+    which existing file to edit rather than creating a new one.
+    """
     try:
         from . import source as SourceManager
 
@@ -295,16 +300,32 @@ def _get_pages_context() -> str:
         for meta in pages_meta:
             parts = [f"  {meta['filename']} ({meta['line_count']} lines)"]
 
+            # Tags: [TechDraw, Spreadsheet, N Draft objects]
             tags = []
             if meta.get("has_techdraw"):
                 tags.append("TechDraw")
             if meta.get("has_spreadsheet"):
                 tags.append("Spreadsheet")
+            draft_count = meta.get("draft_object_count", 0)
+            if draft_count > 0:
+                tags.append(f"{draft_count} Draft objects")
             if tags:
                 parts.append(f"[{', '.join(tags)}]")
 
             if meta.get("first_comment"):
                 parts.append(f"— {meta['first_comment']}")
+
+            # Group names show which TechDraw groups this file feeds
+            group_names = meta.get("group_names", [])
+            if group_names:
+                parts.append(f"-> {', '.join(group_names)}")
+
+            # Label prefixes show what kind of objects the file creates
+            label_prefixes = meta.get("label_prefixes", [])
+            if label_prefixes and not group_names:
+                shown = label_prefixes[:5]
+                suffix = f" +{len(label_prefixes) - 5}" if len(label_prefixes) > 5 else ""
+                parts.append(f"labels: {', '.join(shown)}{suffix}")
 
             lines.append(" ".join(parts))
 

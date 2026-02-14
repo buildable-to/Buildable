@@ -141,8 +141,12 @@ Respond with text only. Do NOT read or edit any files.
 
 ## When the user requests a drawing change
 1. Read the relevant file(s) to understand the current state
-2. Edit existing files or create new ones — write code from your training knowledge, do NOT search the FreeCAD source first
-3. Use descriptive Labels for objects so they're identifiable in the model tree
+2. ALWAYS edit an existing file when the new content belongs to the same drawing group. Only create a new file when the user explicitly asks for a "separate drawing/detail/page" or the content is a genuinely different drawing group (e.g., going from plan geometry to a cross-section detail).
+   - Grid lines, columns, beams, and dimensions on the same plan = ONE file
+   - Multiple views of the same structural element = ONE file
+   - TechDraw sheet setup = ONE file
+3. Write code from your training knowledge, do NOT search the FreeCAD source first
+4. Use descriptive Labels for objects so they're identifiable in the model tree
 
 ## Rules for code
 - All dimensions in millimeters

@@ -11,10 +11,22 @@ and executed together as one script. Users control file naming and organization.
 This provides version-controllable, per-file source of truth.
 """
 
+import re
 from pathlib import Path
 from typing import Optional, List, Dict, Any, Tuple
 
 import FreeCAD
+
+
+# ---------------------------------------------------------------------------
+# Regex patterns for page metadata extraction (precompiled for performance)
+# ---------------------------------------------------------------------------
+_RE_DRAFT_CALL = re.compile(r"Draft\.make_\w+\s*\(")
+_RE_GROUP_NAME = re.compile(
+    r"""doc\.(?:addObject|getObject)\(\s*["']App::DocumentObjectGroup["']\s*,\s*["'](\w+)["']"""
+)
+_RE_LABEL_LITERAL = re.compile(r"""\.Label\s*=\s*["']([^"']+)["']""")
+_RE_LABEL_FSTRING = re.compile(r"""\.Label\s*=\s*f["']([^"']+)["']""")
 
 
 # Backup of all page files before Claude edits them
@@ -156,6 +168,44 @@ def read_all_pages() -> str:
     return "\n\n".join(parts)
 
 
+def _count_draft_calls(content: str) -> int:
+    """Count Draft.make_* function calls in page content."""
+    return len(_RE_DRAFT_CALL.findall(content))
+
+
+def _extract_group_names(content: str) -> List[str]:
+    """Extract App::DocumentObjectGroup names from page content."""
+    seen = []
+    for match in _RE_GROUP_NAME.finditer(content):
+        name = match.group(1)
+        if name not in seen:
+            seen.append(name)
+    return seen
+
+
+def _extract_label_prefixes(content: str) -> List[str]:
+    """Extract unique label prefixes from .Label assignments.
+
+    From ``obj.Label = "MK1_TopFlange_Plan"`` extracts ``MK1``.
+    From ``obj.Label = f"Axis_{var}"`` extracts ``Axis``.
+    """
+    prefixes: set = set()
+
+    for match in _RE_LABEL_LITERAL.finditer(content):
+        label = match.group(1)
+        prefix = label.split("_")[0] if "_" in label else label
+        if prefix and len(prefix) <= 20:
+            prefixes.add(prefix)
+
+    for match in _RE_LABEL_FSTRING.finditer(content):
+        template = match.group(1)
+        static = re.split(r"[{_]", template)[0]
+        if static and len(static) <= 20:
+            prefixes.add(static)
+
+    return sorted(prefixes)
+
+
 def list_pages_metadata() -> List[Dict[str, Any]]:
     """Get metadata for all scripts (for context building).
 
@@ -166,6 +216,9 @@ def list_pages_metadata() -> List[Dict[str, Any]]:
         - first_comment: str (first descriptive # comment)
         - has_techdraw: bool
         - has_spreadsheet: bool
+        - draft_object_count: int
+        - group_names: list of str
+        - label_prefixes: list of str
     """
     return [_get_page_metadata(p) for p in list_pages()]
 
@@ -196,6 +249,9 @@ def _get_page_metadata(page_path: Path) -> Dict[str, Any]:
         "first_comment": first_comment,
         "has_techdraw": "TechDraw" in content,
         "has_spreadsheet": "Spreadsheet" in content,
+        "draft_object_count": _count_draft_calls(content),
+        "group_names": _extract_group_names(content),
+        "label_prefixes": _extract_label_prefixes(content),
     }
 
 
