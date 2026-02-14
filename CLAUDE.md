@@ -311,6 +311,20 @@ Code executed → generate_review_kit() → format_review_prompt()
 4. If edited: re-execute in sandbox, review again (max 3 iterations)
 5. Final result shown to user as preview for approval
 
+#### Inner Claude System Prompt (`backends/claude_code.py`)
+
+The system prompt in `FREECAD_SYSTEM_PROMPT_TEMPLATE` teaches the inner Claude how to produce correct drawings. Key rules tuned through testing:
+
+- **File pattern**: One file = one drawing group = one DrawViewDraft on the sheet. Each file creates geometry, groups it, and adds a view idempotently.
+- **Origin offsets**: Each drawing group uses a unique origin offset (>=15000mm) so groups don't overlap in the 3D Draft view.
+- **addView resets position**: `page.addView(view)` resets X/Y to page center. Must set `view.X`/`view.Y` AFTER `addView()`.
+- **Page coordinates**: Origin (0,0) at bottom-left, Y increases up. Title block at low Y. Safe area: X 20–400, Y 50–260 (A3).
+- **Scale-to-fit**: Inner Claude must compute geometry extent and pick a standard scale (1:20..1:500) that fits the usable sheet area, with a comment showing the math.
+- **FontSize on view**: `DrawViewDraft.FontSize` controls ALL text in SVG rendering. Draft object FontSizes are ignored. Use 5.0 for 1:100, 8.0 for 1:20.
+- **LineSpacing**: Must set `view.LineSpacing = FontSize * 0.7` to prevent multi-line text overlap (default 1.0 causes garbled text at typical FontSize values).
+
+The per-project CLAUDE.md template (`project_claude_template.md`) mirrors these rules and is auto-created for each new project.
+
 #### Build/Deploy
 
 FreeCAD loads Python from `build/debug/Mod/`, NOT `src/Mod/`. After editing DrawingAssistant files:
