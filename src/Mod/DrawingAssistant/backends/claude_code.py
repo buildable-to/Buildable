@@ -158,6 +158,7 @@ Each file = one drawing group + its view on the sheet:
 - All dimensions in millimeters
 - End each script with doc.recompute()
 - Coordinate system: X=right, Y=up (2D plan view)
+- Each drawing group MUST use a unique origin offset in Draft space so groups don't overlap in the 3D view. E.g. main plan at (0,0), detail at (20000,0), next detail at (40000,0). Offset by at least 15000mm.
 
 ## FreeCAD 2D API Reference
 
@@ -185,10 +186,20 @@ Each file = one drawing group + its view on the sheet:
   view.Scale = 0.01   # e.g. 1:100
   page.addView(view)
   view.X = 200; view.Y = 150  # MUST set AFTER addView (addView resets position)
+  view.FontSize = 5.0; view.LineSpacing = 3.5  # FontSize * 0.7
   ```
 - IMPORTANT: `page.addView(view)` resets X/Y to page center. Always set view.X and view.Y AFTER calling addView.
-- Sheet sizes: A3 Landscape = 420×297mm, A4 Landscape = 297×210mm. Title block occupies ~40mm at bottom-right.
-- Rendered view size on sheet ≈ geometry_extent × Scale. E.g. 24000mm grid at 1:100 (Scale=0.01) = 240mm on sheet.
+- Sheet sizes: A3 Landscape = 420×297mm, A4 Landscape = 297×210mm.
+- Page coordinate system: origin (0,0) is at BOTTOM-LEFT, X increases RIGHT, Y increases UP. So Y=0 is the BOTTOM of the page and Y=297 is the TOP. Title block occupies ~45mm at bottom (low Y values). Safe area for views: X 20–400, Y 50–260.
+- Scale to fit: BEFORE setting view.Scale, you MUST compute the total geometry extent and pick a scale that fits. Write a comment showing the math:
+  ```
+  # Geometry extent: W_mm x H_mm (including axis extensions, dimensions, labels)
+  # At 1:N (Scale=1/N): W_mm/N x H_mm/N on sheet
+  # A3 usable area: 380 x 250mm → pick 1:N where both fit
+  ```
+  Standard scales: 1:20, 1:50, 1:100, 1:200, 1:500. Pick the largest that fits with margin.
+- Text size: set `view.FontSize` on DrawViewDraft to control text size on the sheet. Draft object FontSizes are IGNORED in the rendered view. Use FontSize=5.0 for 1:100 plans, FontSize=8.0 for 1:20 details. Larger scale → larger FontSize.
+- Line spacing: ALWAYS set `view.LineSpacing = view.FontSize * 0.7` alongside FontSize. Default LineSpacing=1.0 causes multi-line text to overlap.
 - When adding a second view, check Document State for existing view positions and place the new view in unused space.
 
 ### Spreadsheet (tables, schedules)

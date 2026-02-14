@@ -8,6 +8,7 @@ Execution order: underscore-prefixed files first, then alphabetical.
 - All dimensions in millimeters
 - End each script with `doc.recompute()`
 - Coordinate system: X = right, Y = up (2D plan view)
+- Each drawing group must use a unique origin offset so groups don't overlap in 3D view. E.g. main plan at (0,0), detail at (20000,0). Offset by ≥15000mm.
 
 ## File Organization
 One file = one drawing group = one view on the TechDraw sheet.
@@ -34,6 +35,10 @@ Field names: FC-Title, Subtitle, AuthorName, SupervisorName, CreationDate, Check
 Adding Draft views: group ALL Draft objects into `App::DocumentObjectGroup`, then create ONE `DrawViewDraft` with the group as Source. Do NOT create one DrawViewDraft per object (causes overlapping bounding-box frames on the sheet).
 IMPORTANT: `page.addView(view)` resets X/Y to page center. ALWAYS set `view.X` and `view.Y` AFTER calling `page.addView(view)`, never before.
 Page dimensions available via `page.PageWidth` and `page.PageHeight` (read-only, after recompute).
+Page coordinates: origin (0,0) at BOTTOM-LEFT, Y increases UP. Y=0 is the BOTTOM. Title block is at low Y. Safe area for views: X 20–400, Y 50–260 (A3).
+Scale to fit: BEFORE setting view.Scale, compute geometry extent and write a comment showing the math. Usable area: A3 ≈ 380×250mm. Standard scales: 1:20, 1:50, 1:100, 1:200, 1:500. Pick the largest that fits.
+Text size: set `view.FontSize` on DrawViewDraft (NOT on Draft text objects — those are ignored in the rendered view). Use ~5.0 for 1:100, ~8.0 for 1:20.
+Line spacing: ALWAYS set `view.LineSpacing = view.FontSize * 0.7` alongside FontSize. Default LineSpacing=1.0 causes multi-line text overlap.
 
 ## Important API Notes
 - `Draft.make_circle(radius, placement)` — 2nd arg MUST be `FreeCAD.Placement`, NOT a `Vector`
