@@ -26,6 +26,29 @@ from .changes import ChangeSet
 
 _SKIP_TYPES = ("App::Origin", "App::Plane", "App::Line", "App::Point")
 
+# Types to skip for focus screenshots (no useful 3D geometry to zoom into)
+_SKIP_FOCUS_TYPES = (
+    "TechDraw::DrawPage",
+    "TechDraw::DrawSVGTemplate",
+    "TechDraw::DrawViewPart",
+    "TechDraw::DrawViewDraft",
+    "TechDraw::DrawViewSpreadsheet",
+)
+
+# Properties that are internal/noise — never useful for drawing review
+_SKIP_PROPERTIES = frozenset({
+    "AttacherType",
+    "AttachmentOffset",
+    "AttachmentSupport",
+    "MapMode",
+    "MapPathParameter",
+    "MapReversed",
+    "_ElementMapVersion",
+    "ExpressionEngine",
+    "Symbol",  # TechDraw DrawViewDraft: full rendered SVG markup
+    "EditableTexts",  # TechDraw template: raw editable text list
+})
+
 
 @dataclass
 class ReviewKit:
@@ -246,6 +269,9 @@ def _capture_focus_screenshots(
         obj = doc.getObject(name)
         if not obj or obj.TypeId in _SKIP_TYPES:
             continue
+        # TechDraw objects have no 3D geometry to zoom into
+        if obj.TypeId in _SKIP_FOCUS_TYPES:
+            continue
 
         parent_group = _find_parent_group(obj)
         if parent_group:
@@ -284,9 +310,17 @@ def _capture_focus_screenshots(
         view.setAnimationEnabled(False)
 
     result = {}
+    used_filenames = set()
     try:
         for label, objects in targets:
             safe_label = re.sub(r"[^\w\-]", "_", label).strip("_") or "obj"
+            # Prevent filename collisions
+            if safe_label in used_filenames:
+                counter = 2
+                while f"{safe_label}_{counter}" in used_filenames:
+                    counter += 1
+                safe_label = f"{safe_label}_{counter}"
+            used_filenames.add(safe_label)
             filepath = screenshots_dir / f"review_focus_{safe_label}.png"
 
             try:
@@ -414,7 +448,12 @@ def _serialize_object_2d(obj, change_type: str) -> dict:
     if props:
         flat_props = {}
         for prop_name, prop_data in props.items():
+            if prop_name in _SKIP_PROPERTIES:
+                continue
             val = prop_data.get("value")
+            # Skip large string values (e.g. SVG markup, BREP)
+            if isinstance(val, str) and len(val) > 500:
+                continue
             if isinstance(val, dict) and "x" in val and "y" in val:
                 # Vector — keep x,y only
                 flat_props[prop_name] = {"x": round(val["x"], 2), "y": round(val["y"], 2)}
@@ -423,7 +462,8 @@ def _serialize_object_2d(obj, change_type: str) -> dict:
                 flat_props[prop_name] = val
             else:
                 flat_props[prop_name] = val
-        entry["properties"] = flat_props
+        if flat_props:
+            entry["properties"] = flat_props
 
     # Bounding box (2D)
     if hasattr(obj, "Shape") and obj.Shape and hasattr(obj.Shape, "BoundBox"):
@@ -446,7 +486,9 @@ def _serialize_object_2d(obj, change_type: str) -> dict:
                 if hasattr(v, "Scale"):
                     view_info["scale"] = v.Scale
                 if hasattr(v, "X") and hasattr(v, "Y"):
-                    view_info["position_on_page"] = {"x": v.X, "y": v.Y}
+                    vx = v.X.Value if hasattr(v.X, "Value") else v.X
+                    vy = v.Y.Value if hasattr(v.Y, "Value") else v.Y
+                    view_info["position_on_page"] = {"x": round(vx, 2), "y": round(vy, 2)}
                 entry["views"].append(view_info)
 
     return entry

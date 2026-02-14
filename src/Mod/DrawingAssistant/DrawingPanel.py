@@ -1718,12 +1718,24 @@ Return ONLY the Python code in a ```python code block."""
 
         # Generate review kit for the sandbox document state
         if self._project_dir:
-            # Use an empty change set for sandbox (all objects are "new")
-            sandbox_change_set = ChangeDetector.detect_changes({}, {}, code="")
+            # Temporarily activate sandbox doc to capture its objects
+            main_doc_name = None
+            sandbox_doc_name = self._sandbox_session.sandbox_doc_name
+            if sandbox_doc_name and FreeCAD.getDocument(sandbox_doc_name):
+                main_doc_name = FreeCAD.ActiveDocument.Name if FreeCAD.ActiveDocument else None
+                FreeCAD.setActiveDocument(sandbox_doc_name)
+
+            after_snapshot = SnapshotManager.capture_current_state()
+            sandbox_change_set = ChangeDetector.detect_changes(None, after_snapshot, code="")
+
+            # Restore main doc as active
+            if main_doc_name and FreeCAD.getDocument(main_doc_name):
+                FreeCAD.setActiveDocument(main_doc_name)
+
             kit = generate_review_kit(sandbox_change_set, self._project_dir)
             review_prompt = format_review_prompt(kit)
         else:
-            review_prompt = "Review the current drawing state. Respond with [APPROVED] if correct or explain issues."
+            review_prompt = "Review the current drawing state. Respond with LOOKS_GOOD if correct or explain issues."
 
         self._sandbox_review_worker = LLMWorker(
             self.llm, review_prompt, "", [],
@@ -1742,8 +1754,8 @@ Return ONLY the Python code in a ```python code block."""
             session_id=self.session_manager.get_current_session_id()
         )
 
-        is_approved = "[APPROVED]" in response.upper() or "LOOKS_GOOD" in response.upper()
-        display_response = response.replace("[APPROVED]", "").replace("[approved]", "").strip()
+        is_approved = "LOOKS_GOOD" in response.upper()
+        display_response = response.replace("LOOKS_GOOD", "").replace("looks_good", "").strip()
         self._sandbox_review_response = display_response
 
         if is_approved:
