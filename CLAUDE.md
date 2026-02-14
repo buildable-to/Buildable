@@ -67,7 +67,8 @@ Each workbench follows this structure:
 - **CAM**: Computer-aided manufacturing
 - **TechDraw**: Technical drawing generation
 - **Draft/BIM**: 2D drafting and building information modeling
-- **AIAssistant**: Natural language CAD modeling assistant
+- **AIAssistant**: Natural language CAD modeling assistant (3D)
+- **DrawingAssistant**: Natural language 2D structural drawing assistant (Draft + TechDraw)
 
 ### AIAssistant Module (`src/Mod/AIAssistant/`)
 
@@ -229,6 +230,96 @@ System prompt instructs Claude to:
 3. CREATE objects → Add code
 4. DELETE objects → Remove code
 5. MODIFY objects → Edit existing code
+
+### DrawingAssistant Module (`src/Mod/DrawingAssistant/`)
+
+2D structural drawing assistant for precast concrete engineers. Same code-as-source-of-truth architecture as AIAssistant, but focused on Draft (2D geometry) + TechDraw (sheet drawings) workflows.
+
+#### Module Structure
+
+```
+DrawingAssistant/
+├── DrawingPanel.py            # Main dock widget, orchestrates UI and LLM requests
+├── Theme.py                   # Cursor-inspired dark theme styling
+│
+├── backends/
+│   └── claude_code.py         # Spawns `claude` CLI with Read/Edit/Write tools
+│
+├── core/
+│   ├── context.py             # Builds document context for LLM
+│   ├── source.py              # Manages pages/ directory (multi-file source)
+│   ├── snapshot.py            # Captures document state to JSON
+│   ├── changes.py             # Detects created/modified/deleted objects between snapshots
+│   ├── executor.py            # Executes page files safely
+│   ├── preview.py             # Sandbox preview before commit (PreviewManager)
+│   └── review_kit.py          # On-demand review system (screenshots + inspection JSON)
+│
+├── persistence/
+│   ├── session.py             # Chat session persistence
+│   └── activity.py            # Event logging to activity.ndjson
+│
+└── widgets/                   # Qt UI components (chat, preview, plan, etc.)
+```
+
+#### Project Structure (pages-based)
+
+```
+MyProject/
+├── MyProject.FCStd
+└── MyProject/
+    ├── pages/                   # One .py file per drawing page
+    │   ├── 01_column_grid.py
+    │   └── 02_foundation.py
+    ├── screenshots/             # Review kit output (auto-generated)
+    │   ├── review_top.png
+    │   ├── review_focus_*.png
+    │   └── inspection.json
+    ├── CLAUDE.md
+    ├── activity.ndjson
+    ├── sessions/
+    └── snapshots/
+```
+
+#### On-Demand Self-Review System (`core/review_kit.py`)
+
+After code execution, generates a "review kit" of files on disk. Claude reads these selectively via the Read tool during self-review, rather than receiving all images upfront.
+
+**Review Kit contents:**
+- `review_top.png` — Full top-down 3D view of all Draft geometry
+- `review_focus_{group}.png` — Zoomed screenshots per changed object group (uses `Selection.addSelection()` + `SendMsgToActiveView("ViewSelection")`)
+- `inspection.json` — Serialized object properties (positions, dimensions, bounding boxes) for numerical verification
+
+**Flow:**
+```
+Code executed → generate_review_kit() → format_review_prompt()
+    │                                           │
+    ├── _capture_top_view()                     └── Lists available files
+    ├── _capture_focus_screenshots()                Claude reads on-demand
+    └── _write_inspection_json()                    via Read tool
+```
+
+**Key design decisions:**
+- No TechDraw screenshots — `exportPageAsSvg()` doesn't include template borders, 3D top view is better
+- Focus screenshots skip TechDraw types (`_SKIP_FOCUS_TYPES`) — they have no 3D geometry
+- `inspection.json` filters noisy properties (`_SKIP_PROPERTIES`) and large strings (>500 chars, e.g. SVG Symbol)
+- Review keyword is `LOOKS_GOOD` — Claude responds with this if drawing is correct
+
+**Sandbox review flow:**
+1. Code executes in sandbox doc (PreviewManager)
+2. `_run_sandbox_self_review()` generates review kit, sends prompt to Claude
+3. Claude reads files on-demand, responds LOOKS_GOOD or edits pages to fix
+4. If edited: re-execute in sandbox, review again (max 3 iterations)
+5. Final result shown to user as preview for approval
+
+#### Build/Deploy
+
+FreeCAD loads Python from `build/debug/Mod/`, NOT `src/Mod/`. After editing DrawingAssistant files:
+```bash
+cp src/Mod/DrawingAssistant/*.py build/debug/Mod/DrawingAssistant/
+cp src/Mod/DrawingAssistant/core/*.py build/debug/Mod/DrawingAssistant/core/
+# Or: cmake --install build/debug
+# Also clear __pycache__ in both locations
+```
 
 ### Key Patterns
 - **Property System**: Dynamic properties on DocumentObjects with expression support
