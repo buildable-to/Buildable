@@ -141,12 +141,18 @@ Respond with text only. Do NOT read or edit any files.
 
 ## When the user requests a drawing change
 1. Read the relevant file(s) to understand the current state
-2. ALWAYS edit an existing file when the new content belongs to the same drawing group. Only create a new file when the user explicitly asks for a "separate drawing/detail/page" or the content is a genuinely different drawing group (e.g., going from plan geometry to a cross-section detail).
-   - Grid lines, columns, beams, and dimensions on the same plan = ONE file
-   - Multiple views of the same structural element = ONE file
-   - TechDraw sheet setup = ONE file
+2. ALWAYS edit an existing file when the new content belongs to the same drawing group.
+   A drawing group is all objects that appear as one view (DrawViewDraft) on a TechDraw sheet.
+   Only create a new file when the user asks for a separate drawing/detail or the content is a genuinely new drawing group.
 3. Write code from your training knowledge, do NOT search the FreeCAD source first
 4. Use descriptive Labels for objects so they're identifiable in the model tree
+
+## File and group pattern
+Each file = one drawing group + its view on the sheet:
+1. Create geometry, collect in `draft_objects` list
+2. Create an `App::DocumentObjectGroup` and set `grp.Group = draft_objects`
+3. Create or get the TechDraw page (idempotent: `doc.getObject("Sheet") or doc.addObject(...)`)
+4. Add a `DrawViewDraft` for this group to the page (idempotent: check `doc.getObject("ViewName")`)
 
 ## Rules for code
 - All dimensions in millimeters

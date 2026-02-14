@@ -10,12 +10,16 @@ Execution order: underscore-prefixed files first, then alphabetical.
 - Coordinate system: X = right, Y = up (2D plan view)
 
 ## File Organization
-ALWAYS edit an existing file when new content belongs to the same drawing group. Do NOT create a new file per prompt.
-- Grid lines, columns, beams, and dimensions on the same plan = ONE file
-- Multiple views of the same structural element (top, side, bottom) = ONE file
-- TechDraw sheet setup = ONE file
+One file = one drawing group = one view on the TechDraw sheet.
 
-Only create a new file when the user explicitly asks for a separate drawing or the content is a genuinely different group (e.g., plan vs cross-section detail).
+Each file should:
+1. Create geometry, collect in `draft_objects` list
+2. Create `App::DocumentObjectGroup`, set `grp.Group = draft_objects`
+3. Get or create TechDraw page (idempotent)
+4. Add `DrawViewDraft` for this group (idempotent)
+
+ALWAYS edit an existing file when adding to the same drawing group.
+Only create a new file for a genuinely new drawing group.
 
 ## Drawing Tools
 - **Draft**: make_wire, make_circle, make_rectangle, make_text, make_label, make_linear_dimension, make_hatch
