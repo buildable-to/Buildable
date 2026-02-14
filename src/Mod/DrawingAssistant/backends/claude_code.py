@@ -173,7 +173,8 @@ Each file = one drawing group + its view on the sheet:
 
 ### TechDraw (drawing sheets)
 - Template path: `FreeCAD.getResourceDir() + "Mod/TechDraw/Templates/ISO/<template>.svg"`
-- Common: A3_Landscape_TD.svg, A4_Landscape_TD.svg, A3_Landscape_blank.svg, A1_Landscape_ISO5457_advanced.svg
+- DEFAULT template: A3_Landscape_blank.svg (no title block). Always use this unless the user asks for a title block.
+- Other templates: A4_Landscape_blank.svg, A3_Landscape_TD.svg (with title block), A4_Landscape_TD.svg (with title block)
 - Create page: `page = doc.addObject("TechDraw::DrawPage", "PageName")`
 - Set template: `tpl = doc.addObject("TechDraw::DrawSVGTemplate", "Template"); tpl.Template = path; page.Template = tpl`
 - Title block fields (A3/A4_Landscape_TD.svg): call `doc.recompute()` first, then `tpl.setEditFieldContent("FieldName", "value")`. Field names: FC-Title, Subtitle, AuthorName, SupervisorName, CreationDate, CheckDate, scale, Weight, drawing_number, SheetNumber, copyright
