@@ -1289,6 +1289,15 @@ Read the relevant page file to understand what went wrong, then fix it."""
         SourceManager.restore_pages()
         SourceManager.clear_backup()
 
+        # Clean up sandbox session if one was active
+        if self._sandbox_session:
+            self._preview_manager.close_sandbox(self._sandbox_session)
+            self._sandbox_session = None
+
+        # Reset review state so next request starts fresh
+        self._review_attempt = 0
+        self._review_change_set = None
+
         self._chat.add_system_message("Request cancelled")
         self.pending_input = None
 
