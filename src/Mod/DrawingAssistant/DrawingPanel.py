@@ -636,7 +636,7 @@ class DrawingAssistantDockWidget(QtWidgets.QDockWidget):
             f"user_images={len(user_images)}, project_dir={self._project_dir}\n"
         )
 
-        display_text = user_input or "(image attached)" if (user_input or user_images) else ""
+        display_text = user_input if user_input else ("(image attached)" if user_images else "")
         if not user_input and not user_images:
             return
 

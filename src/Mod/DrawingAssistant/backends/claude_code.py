@@ -410,8 +410,19 @@ class ClaudeCodeBackend:
                         return f"# Error: {error_msg}"
 
             # Wait for process to complete
-            process.wait(timeout=180)
-            self._process = None
+            # Use shorter timeout if cancelled (SIGINT should exit quickly)
+            wait_timeout = 10 if self._cancelled else 180
+            try:
+                process.wait(timeout=wait_timeout)
+            except subprocess.TimeoutExpired:
+                # Process didn't exit in time — force kill
+                FreeCAD.Console.PrintWarning(
+                    "DrawingAssistant: Process didn't exit after "
+                    f"{wait_timeout}s, killing\n"
+                )
+                process.kill()
+                process.wait(timeout=5)
+
             self.last_duration_ms = (time.time() - start_time) * 1000
 
             # Store tool calls for UI access
@@ -452,26 +463,20 @@ class ClaudeCodeBackend:
 
             return self._clean_response(result_text)
 
-        except subprocess.TimeoutExpired:
-            self._process = None
-            self.last_duration_ms = (time.time() - start_time) * 1000
-            FreeCAD.Console.PrintError("DrawingAssistant: Claude Code request timed out\n")
-            return "# Error: Request timed out"
-
         except json.JSONDecodeError as e:
-            self._process = None
             FreeCAD.Console.PrintError(f"DrawingAssistant: Failed to parse Claude Code response: {e}\n")
             return f"# Error: Failed to parse response: {e}"
 
         except FileNotFoundError:
-            self._process = None
             FreeCAD.Console.PrintError("DrawingAssistant: Claude Code CLI not found. Is it installed?\n")
             return "# Error: Claude Code CLI not found. Install with: npm install -g @anthropic-ai/claude-code"
 
         except Exception as e:
-            self._process = None
             FreeCAD.Console.PrintError(f"DrawingAssistant: Claude Code error: {e}\n")
             return f"# Error: {e}"
+
+        finally:
+            self._process = None
 
     def cancel(self):
         """Send SIGINT to the running Claude Code process for graceful interruption.
