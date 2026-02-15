@@ -438,7 +438,8 @@ class DrawingAssistantDockWidget(QtWidgets.QDockWidget):
             try:
                 model = self._chat._chat_list._model
                 for msg in old_messages:
-                    model.add_message(msg.text, msg.role, changes=msg.changes)
+                    model.add_message(msg.text, msg.role, changes=msg.changes,
+                                      image_paths=msg.image_paths)
             except Exception as e:
                 FreeCAD.Console.PrintWarning(
                     f"DrawingAssistant: Could not restore messages after theme change: {e}\n"
