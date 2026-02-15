@@ -609,13 +609,16 @@ class ChatWidget(QtWidgets.QWidget):
                             return True  # Consumed — don't paste text
                     # Try file URLs (screenshot tools often copy as file URL)
                     if mime.hasUrls():
+                        added_any = False
                         for url in mime.urls():
                             path = url.toLocalFile()
                             if path and self._is_supported_image(path):
                                 image = QtGui.QImage(path)
                                 if not image.isNull():
                                     self._add_image(image)
-                                    return True
+                                    added_any = True
+                        if added_any:
+                            return True
                 # Fall through to normal text paste
 
         # Handle drag-drop on input viewport

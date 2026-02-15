@@ -670,8 +670,11 @@ class DrawingAssistantDockWidget(QtWidgets.QDockWidget):
         FreeCAD.Console.PrintMessage(f"DrawingAssistant: User: {preview}\n")
 
         # Log message sent
+        log_text = display_text
+        if user_image_paths:
+            log_text = f"{display_text} [{len(user_image_paths)} image(s)]"
         ActivityLogger.log_message_sent(
-            display_text,
+            log_text,
             session_id=self.session_manager.get_current_session_id()
         )
 
@@ -774,7 +777,7 @@ Do NOT write any code. Only output the numbered plan steps."""
                 num = int(f.stem.split("_")[0])
                 max_num = max(max_num, num)
             except (ValueError, IndexError):
-                pass
+                pass  # Not a numbered file, skip
 
         saved_paths = []
         for i, image in enumerate(images):
@@ -782,11 +785,15 @@ Do NOT write any code. Only output the numbered plan steps."""
             timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M")
             filename = f"{next_num:03d}_{timestamp}.png"
             path = uploads_dir / filename
-            image.save(str(path), "PNG")
-            saved_paths.append(str(path))
-            FreeCAD.Console.PrintMessage(
-                f"DrawingAssistant: Saved user image: user_uploads/{filename}\n"
-            )
+            if image.save(str(path), "PNG"):
+                saved_paths.append(str(path))
+                FreeCAD.Console.PrintMessage(
+                    f"DrawingAssistant: Saved user image: user_uploads/{filename}\n"
+                )
+            else:
+                FreeCAD.Console.PrintWarning(
+                    f"DrawingAssistant: Failed to save image: {path}\n"
+                )
 
         return saved_paths
 
