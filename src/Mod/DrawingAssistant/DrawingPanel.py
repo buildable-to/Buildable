@@ -94,6 +94,7 @@ class LLMWorker(QtCore.QThread):
     """Background worker for LLM API calls."""
     finished = QtCore.Signal(str)
     error = QtCore.Signal(str)
+    cancelled = QtCore.Signal()  # Emitted when request was cancelled via SIGINT
     tool_call = QtCore.Signal(str, dict)  # For progress indicator updates
 
     def __init__(self, llm, user_input, context, conversation,
@@ -116,12 +117,20 @@ class LLMWorker(QtCore.QThread):
                 self.user_input, self.context, self.conversation,
                 multi_angle_screenshots=self.multi_angle_screenshots
             )
-            self.finished.emit(response)
+            if response is None:
+                # Backend returned None = request was cancelled
+                self.cancelled.emit()
+            else:
+                self.finished.emit(response)
         except Exception as e:
             self.error.emit(str(e))
         finally:
             # Clean up callback
             self.llm.on_tool_call = None
+
+    def cancel(self):
+        """Cancel the running request by sending SIGINT to the backend process."""
+        self.llm.cancel()
 
 
 class DrawingAssistantDockWidget(QtWidgets.QDockWidget):
@@ -441,6 +450,7 @@ class DrawingAssistantDockWidget(QtWidgets.QDockWidget):
         self._chat.runCodeRequested.connect(self._on_run_code)
         self._chat.previewApproved.connect(self._on_preview_approved)
         self._chat.previewCancelled.connect(self._on_preview_cancelled)
+        self._chat.stopRequested.connect(self._cancel_request)
 
         # Plan mode signals
         self._chat.planApproved.connect(self._on_plan_approved)
@@ -737,6 +747,7 @@ Do NOT write any code. Only output the numbered plan steps."""
 
         self.worker.finished.connect(self._on_response)
         self.worker.error.connect(self._on_error)
+        self.worker.cancelled.connect(self._on_cancelled)
         self.worker.tool_call.connect(self._on_tool_call)
         self.worker.start()
 
@@ -1057,6 +1068,7 @@ Return ONLY the fixed Python code in a ```python code block, no explanation need
             )
         )
         self._fix_worker.error.connect(self._on_fix_error)
+        self._fix_worker.cancelled.connect(self._on_cancelled)
         self._fix_worker.start()
 
     def _on_fix_response(self, description: str, response: str,
@@ -1108,6 +1120,7 @@ Read the relevant page file to understand what went wrong, then fix it."""
         self._source_fix_worker = LLMWorker(self.llm, fix_prompt, "", [])
         self._source_fix_worker.finished.connect(self._on_source_fix_response)
         self._source_fix_worker.error.connect(self._on_source_fix_error)
+        self._source_fix_worker.cancelled.connect(self._on_cancelled)
         self._source_fix_worker.start()
 
     def _on_source_fix_response(self, response: str):
@@ -1237,6 +1250,39 @@ Read the relevant page file to understand what went wrong, then fix it."""
         )
 
         self._chat.add_error_message(error_msg)
+        self.pending_input = None
+
+    def _cancel_request(self):
+        """Cancel the currently running LLM request by sending SIGINT.
+
+        Sends SIGINT to the claude process. The actual cleanup happens in
+        _on_cancelled() which is called when the worker thread finishes.
+        """
+        FreeCAD.Console.PrintMessage("DrawingAssistant: Cancelling request...\n")
+
+        # Find and cancel whichever worker is active
+        workers = [
+            self.worker, self._fix_worker, self._plan_worker,
+            getattr(self, '_source_fix_worker', None),
+            getattr(self, '_review_worker', None),
+            getattr(self, '_sandbox_review_worker', None),
+        ]
+        for w in workers:
+            if w and w.isRunning():
+                w.cancel()
+                break
+
+    def _on_cancelled(self):
+        """Handle cancelled LLM request (worker emits this after process exits)."""
+        FreeCAD.Console.PrintMessage("DrawingAssistant: Request cancelled by user\n")
+        self._chat.hide_typing()
+        self._chat.set_input_enabled(True)
+
+        # Restore pages from backup (Claude may have partially edited files)
+        SourceManager.restore_pages()
+        SourceManager.clear_backup()
+
+        self._chat.add_system_message("Request cancelled")
         self.pending_input = None
 
     def _on_tool_call(self, tool_name: str, tool_input: dict):
@@ -1464,6 +1510,7 @@ Return ONLY the Python code in a ```python code block."""
         )
         self._plan_worker.finished.connect(self._on_plan_code_response)
         self._plan_worker.error.connect(self._on_error)
+        self._plan_worker.cancelled.connect(self._on_cancelled)
         self._plan_worker.start()
 
     def _on_plan_code_response(self, response: str):
@@ -1687,6 +1734,7 @@ Return ONLY the Python code in a ```python code block."""
         )
         self._review_worker.finished.connect(self._on_review_response)
         self._review_worker.error.connect(self._on_review_error)
+        self._review_worker.cancelled.connect(self._on_cancelled)
         self._review_worker.start()
 
     def _on_review_response(self, response: str):
@@ -1815,6 +1863,7 @@ Return ONLY the Python code in a ```python code block."""
         )
         self._sandbox_review_worker.finished.connect(self._on_sandbox_review_response)
         self._sandbox_review_worker.error.connect(self._on_sandbox_review_error)
+        self._sandbox_review_worker.cancelled.connect(self._on_cancelled)
         self._sandbox_review_worker.start()
 
     def _on_sandbox_review_response(self, response: str):

@@ -10,6 +10,7 @@ Official documentation: https://code.claude.com/docs/en/headless
 
 import json
 import os
+import signal
 import shutil
 import subprocess
 import sys
@@ -256,6 +257,10 @@ class ClaudeCodeBackend:
         # Signature: on_tool_call(tool_name: str, tool_input: dict)
         self.on_tool_call = None
 
+        # Active subprocess handle (for cancellation via SIGINT)
+        self._process: Optional[subprocess.Popen] = None
+        self._cancelled = False  # Set by cancel(), checked after process exits
+
     def chat(
         self,
         user_message: str,
@@ -314,6 +319,7 @@ class ClaudeCodeBackend:
         # Reset state for this request
         self.last_tool_calls = []
         self.edited_files = []
+        self._cancelled = False
 
         start_time = time.time()
         try:
@@ -337,6 +343,7 @@ class ClaudeCodeBackend:
                 cwd=cwd,
                 **kwargs
             )
+            self._process = process
 
             # Write prompt to stdin and close
             process.stdin.write(prompt)
@@ -404,10 +411,18 @@ class ClaudeCodeBackend:
 
             # Wait for process to complete
             process.wait(timeout=180)
+            self._process = None
             self.last_duration_ms = (time.time() - start_time) * 1000
 
             # Store tool calls for UI access
             self.last_tool_calls = tool_calls
+
+            # Check if we cancelled this request
+            if self._cancelled:
+                FreeCAD.Console.PrintMessage(
+                    "DrawingAssistant: Claude Code request was cancelled\n"
+                )
+                return None  # Sentinel: cancelled, not an error
 
             # Track which page files were edited (for direct source editing flow)
             self.edited_files = []
@@ -438,21 +453,39 @@ class ClaudeCodeBackend:
             return self._clean_response(result_text)
 
         except subprocess.TimeoutExpired:
+            self._process = None
             self.last_duration_ms = (time.time() - start_time) * 1000
             FreeCAD.Console.PrintError("DrawingAssistant: Claude Code request timed out\n")
             return "# Error: Request timed out"
 
         except json.JSONDecodeError as e:
+            self._process = None
             FreeCAD.Console.PrintError(f"DrawingAssistant: Failed to parse Claude Code response: {e}\n")
             return f"# Error: Failed to parse response: {e}"
 
         except FileNotFoundError:
+            self._process = None
             FreeCAD.Console.PrintError("DrawingAssistant: Claude Code CLI not found. Is it installed?\n")
             return "# Error: Claude Code CLI not found. Install with: npm install -g @anthropic-ai/claude-code"
 
         except Exception as e:
+            self._process = None
             FreeCAD.Console.PrintError(f"DrawingAssistant: Claude Code error: {e}\n")
             return f"# Error: {e}"
+
+    def cancel(self):
+        """Send SIGINT to the running Claude Code process for graceful interruption.
+
+        Claude Code saves session state on SIGINT, so --resume will continue
+        the conversation including the interrupted turn.
+        """
+        self._cancelled = True
+        if self._process and self._process.poll() is None:
+            FreeCAD.Console.PrintMessage("DrawingAssistant: Sending SIGINT to Claude Code process\n")
+            if sys.platform == "win32":
+                self._process.terminate()
+            else:
+                self._process.send_signal(signal.SIGINT)
 
     def _build_prompt(self, message: str, context: str,
                        multi_angle_screenshots: list = None) -> str:

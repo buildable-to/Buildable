@@ -410,6 +410,7 @@ class ChatWidget(QtWidgets.QWidget):
     planApproved = QtCore.Signal(str)  # Emits the approved plan text
     planEdited = QtCore.Signal(str)    # Emits the edited plan text
     planCancelled = QtCore.Signal()
+    stopRequested = QtCore.Signal()  # Emitted when user clicks Stop or presses Escape
 
     _SUPPORTED_IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
 
@@ -420,6 +421,7 @@ class ChatWidget(QtWidgets.QWidget):
         self._streaming_widget = None  # Track actual widget, not just row index
         self._pending_debug_info = None
         self._pending_images = []  # List of (QImage, QPixmap thumbnail)
+        self._stop_mode = False  # True when button is in "Stop" mode
         self._setup_ui()
         self._connect_signals()
 
@@ -580,6 +582,7 @@ class ChatWidget(QtWidgets.QWidget):
 
     def eventFilter(self, obj, event):
         """Handle Enter key, Ctrl+V paste, and drag-drop in input."""
+
         if obj == self._input and event.type() == QtCore.QEvent.KeyPress:
             if event.key() == QtCore.Qt.Key_Return:
                 if event.modifiers() & QtCore.Qt.ShiftModifier:
@@ -641,13 +644,18 @@ class ChatWidget(QtWidgets.QWidget):
         return super().eventFilter(obj, event)
 
     def _on_send(self):
-        """Handle send button click.
+        """Handle send button click or stop button click.
 
-        Clears input + thumbnails immediately (visual feedback), then emits
-        signal with (text, images).  The user message is NOT added to the chat
-        here — DrawingPanel._on_send() adds it after saving images to disk so
-        the MessageCard is created with image_paths already set.
+        In stop mode, emits stopRequested. Otherwise clears input + thumbnails
+        immediately (visual feedback), then emits signal with (text, images).
+        The user message is NOT added to the chat here — DrawingPanel._on_send()
+        adds it after saving images to disk so the MessageCard is created with
+        image_paths already set.
         """
+        if self._stop_mode:
+            self.stopRequested.emit()
+            return
+
         text = self._input.toPlainText().strip()
         has_images = len(self._pending_images) > 0
         FreeCAD.Console.PrintMessage(
@@ -874,9 +882,67 @@ class ChatWidget(QtWidgets.QWidget):
         self._chat_list.set_progress_reviewing()
 
     def set_input_enabled(self, enabled: bool):
-        """Enable/disable input."""
+        """Enable/disable input and toggle Send/Stop button mode."""
         self._input.setEnabled(enabled)
-        self._send_btn.setEnabled(enabled)
+        if enabled:
+            self.set_stop_mode(False)
+        else:
+            self.set_stop_mode(True)
+
+    def set_stop_mode(self, active: bool):
+        """Toggle the send button between Send and Stop modes.
+
+        In Stop mode, the button is enabled and styled distinctly to indicate
+        the user can cancel the running request.
+        """
+        if active == self._stop_mode:
+            return
+        self._stop_mode = active
+
+        if active:
+            self._send_btn.setText("Stop")
+            self._send_btn.setEnabled(True)
+            self._send_btn.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: {Theme.COLORS['bg_tertiary']};
+                    color: {Theme.COLORS['text_secondary']};
+                    border: 1px solid {Theme.COLORS['border_default']};
+                    border-radius: {Theme.RADIUS['md']};
+                    font-weight: {Theme.FONTS['weight_medium']};
+                    font-size: {Theme.FONTS['size_base']};
+                }}
+                QPushButton:hover {{
+                    background-color: {Theme.COLORS['error_bg']};
+                    color: {Theme.COLORS['error_text']};
+                    border-color: {Theme.COLORS['error_border']};
+                }}
+                QPushButton:pressed {{
+                    background-color: {Theme.COLORS['error_border']};
+                }}
+            """)
+        else:
+            self._send_btn.setText("Send")
+            self._send_btn.setEnabled(True)
+            self._send_btn.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: {Theme.COLORS['accent_primary']};
+                    color: #ffffff;
+                    border: none;
+                    border-radius: {Theme.RADIUS['md']};
+                    font-weight: {Theme.FONTS['weight_medium']};
+                    font-size: {Theme.FONTS['size_base']};
+                }}
+                QPushButton:hover {{
+                    background-color: {Theme.COLORS['accent_primary_hover']};
+                }}
+                QPushButton:pressed {{
+                    background-color: {Theme.COLORS['accent_primary']};
+                }}
+                QPushButton:disabled {{
+                    background-color: {Theme.COLORS['bg_tertiary']};
+                    color: {Theme.COLORS['text_muted']};
+                }}
+            """)
 
     def clear_chat(self):
         """Clear all messages."""
