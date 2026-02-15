@@ -410,7 +410,7 @@ class ChatWidget(QtWidgets.QWidget):
     planApproved = QtCore.Signal(str)  # Emits the approved plan text
     planEdited = QtCore.Signal(str)    # Emits the edited plan text
     planCancelled = QtCore.Signal()
-    stopRequested = QtCore.Signal()  # Emitted when user clicks Stop or presses Escape
+    stopRequested = QtCore.Signal()  # Emitted when user clicks Stop
 
     _SUPPORTED_IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
 
