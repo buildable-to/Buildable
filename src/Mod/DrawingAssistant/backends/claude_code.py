@@ -267,6 +267,7 @@ class ClaudeCodeBackend:
         context: str = "",
         history: list = None,
         multi_angle_screenshots: list = None,
+        permission_mode: str = None,
     ) -> str:
         """Send message to Claude Code CLI and get response.
 
@@ -275,6 +276,7 @@ class ClaudeCodeBackend:
             context: Optional document context string (passed in prompt if no CLAUDE.md)
             history: Optional conversation history (not used - Claude Code manages sessions)
             multi_angle_screenshots: Optional list of file paths to multi-angle screenshots
+            permission_mode: Optional permission mode ('plan' for read-only exploration)
 
         Returns:
             Generated response (Python code or text answer)
@@ -291,8 +293,12 @@ class ClaudeCodeBackend:
         claude_cmd = _get_claude_command()
         cmd = claude_cmd + ["-p", "--verbose", "--output-format", "stream-json"]
 
-        # Allow Edit and Write tools for direct page file modification
+        # Allow tools for page file access (Edit/Write excluded in plan mode)
         cmd.extend(["--allowedTools", "Read,Glob,Grep,Edit,Write"])
+
+        # Permission mode (e.g. 'plan' restricts to read-only tools)
+        if permission_mode:
+            cmd.extend(["--permission-mode", permission_mode])
 
         # Build system prompt
         pages_dir = self._get_pages_dir()
