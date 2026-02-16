@@ -1489,12 +1489,20 @@ Read the relevant page file to understand what went wrong, then fix it."""
         self._chat.add_system_message("Plan cancelled")
 
     def _generate_code_from_plan(self, plan_text: str):
-        """Request code generation based on approved plan (Phase 2)."""
+        """Request code generation based on approved plan (Phase 2).
+
+        Uses --resume to continue the same session from Phase 1, so Claude
+        retains all exploration context. No --permission-mode plan this time,
+        so Claude gets full Edit/Write access to implement the plan.
+        """
         if self._plan_worker and self._plan_worker.isRunning():
             return
 
         self._chat.show_typing(show_review_phase=self.self_review_action.isChecked())
         self._chat.set_input_enabled(False)
+
+        # Backup pages before Claude edits them (for restore on cancel/error)
+        SourceManager.backup_pages()
 
         context = ""
         if self.context_action.isChecked():
@@ -1524,48 +1532,16 @@ Read the relevant page file to understand what went wrong, then fix it."""
 
 Original request: {self._plan_user_request or ""}
 
-Now write the FreeCAD Python code to implement this plan exactly as specified.
-Return ONLY the Python code in a ```python code block."""
+Now implement this plan by editing the page files in pages/. Follow the same rules as for any drawing request."""
 
         self._plan_worker = LLMWorker(
             self.llm, code_prompt, context, conversation,
             self._get_top_view_screenshots()
         )
-        self._plan_worker.finished.connect(self._on_plan_code_response)
+        self._plan_worker.finished.connect(self._on_response)
         self._plan_worker.error.connect(self._on_error)
         self._plan_worker.cancelled.connect(self._on_cancelled)
         self._plan_worker.start()
-
-    def _on_plan_code_response(self, response: str):
-        """Handle code response from plan (Phase 2)."""
-        self._chat.hide_typing()
-        self._chat.set_input_enabled(True)
-
-        self._pending_plan = None
-        self._plan_user_request = None
-        self._last_code = response
-
-        self.session_manager.log_llm_request(
-            user_message="[Plan Phase 2: Code Generation]",
-            system_prompt=self.llm.last_system_prompt,
-            context=self.llm.last_context,
-            conversation_history=self.llm.last_conversation,
-            response=response,
-            model=self.llm.model,
-            api_url=self.llm.api_url,
-            duration_ms=self.llm.last_duration_ms,
-            success=True,
-            tool_calls=getattr(self.llm, 'last_tool_calls', None),
-            cost_usd=getattr(self.llm, 'last_cost', 0)
-        )
-
-        description, code = self._parse_response(response)
-
-        if not code.strip():
-            self._show_traditional_response(response)
-            return
-
-        self._attempt_preview_with_autofix(description, code, response)
 
     def _on_run_code(self, code: str, already_executed: bool = False):
         """Execute the provided code and display changes."""
