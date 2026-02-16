@@ -805,10 +805,6 @@ Output your plan in this format:
         self._chat.hide_typing()
         self._chat.set_input_enabled(True)
 
-        # Clear plan state (safe to call even if not in plan mode)
-        self._pending_plan = None
-        self._plan_user_request = None
-
         self._last_code = response
 
         # Log response received
@@ -849,6 +845,10 @@ Output your plan in this format:
             self._chat.add_plan_message(response, self._plan_user_request or "")
             self.pending_input = None
             return
+
+        # Clear plan state after Phase 2 (not during Phase 1 — still needed)
+        self._pending_plan = None
+        self._plan_user_request = None
 
         # Check if Claude edited page files directly
         if getattr(self.llm, 'source_was_edited', False):
