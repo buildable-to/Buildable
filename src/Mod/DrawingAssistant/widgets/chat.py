@@ -73,13 +73,14 @@ class ChatListWidget(QtWidgets.QScrollArea):
             plan.set_disabled(True)
         self._active_plans.clear()
 
-    def add_message(self, text: str, role: str, debug_info: dict = None) -> int:
+    def add_message(self, text: str, role: str, debug_info: dict = None,
+                    image_paths: list = None) -> int:
         """Add a new message to the chat."""
         # Disable any active previews when user sends a new message
         if role == "user":
             self.disable_active_previews()
 
-        row = self._model.add_message(text, role)
+        row = self._model.add_message(text, role, image_paths=image_paths)
         message = self._model.get_message(row)
         widget = MessageCard(message, debug_info=debug_info)
         widget.runCodeRequested.connect(self.runCodeRequested.emit)
@@ -402,13 +403,16 @@ class StreamingController(QtCore.QObject):
 class ChatWidget(QtWidgets.QWidget):
     """Main chat widget with modern styling."""
 
-    messageSubmitted = QtCore.Signal(str)
+    messageSubmitted = QtCore.Signal(str, list)  # (text, list of QImage)
     runCodeRequested = QtCore.Signal(str)
     previewApproved = QtCore.Signal(str)
     previewCancelled = QtCore.Signal()
     planApproved = QtCore.Signal(str)  # Emits the approved plan text
     planEdited = QtCore.Signal(str)    # Emits the edited plan text
     planCancelled = QtCore.Signal()
+    stopRequested = QtCore.Signal()  # Emitted when user clicks Stop
+
+    _SUPPORTED_IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -416,6 +420,8 @@ class ChatWidget(QtWidgets.QWidget):
         self._streaming_row = -1
         self._streaming_widget = None  # Track actual widget, not just row index
         self._pending_debug_info = None
+        self._pending_images = []  # List of (QImage, QPixmap thumbnail)
+        self._stop_mode = False  # True when button is in "Stop" mode
         self._setup_ui()
         self._connect_signals()
 
@@ -461,8 +467,42 @@ class ChatWidget(QtWidgets.QWidget):
             }}
         """)
         input_frame_layout = QtWidgets.QHBoxLayout(input_frame)
-        input_frame_layout.setContentsMargins(14, 10, 10, 10)
-        input_frame_layout.setSpacing(10)
+        input_frame_layout.setContentsMargins(10, 10, 10, 10)
+        input_frame_layout.setSpacing(8)
+
+        # Attach button (paperclip icon via SVG)
+        self._attach_btn = QtWidgets.QPushButton()
+        self._attach_btn.setFixedSize(32, 32)
+        self._attach_btn.setCursor(QtCore.Qt.PointingHandCursor)
+        self._attach_btn.setToolTip("Attach image")
+        _clip_color = Theme.COLORS['text_muted']
+        _clip_svg = (
+            f'<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" '
+            f'fill="none" stroke="{_clip_color}" stroke-width="2" stroke-linecap="round" '
+            f'stroke-linejoin="round">'
+            f'<path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 '
+            f'015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/></svg>'
+        )
+        _clip_pixmap = QtGui.QPixmap(18, 18)
+        _clip_pixmap.fill(QtCore.Qt.transparent)
+        _clip_renderer = QtGui.QImage.fromData(_clip_svg.encode())
+        if not _clip_renderer.isNull():
+            _clip_pixmap = QtGui.QPixmap.fromImage(_clip_renderer)
+        self._attach_btn.setIcon(QtGui.QIcon(_clip_pixmap))
+        self._attach_btn.setIconSize(QtCore.QSize(18, 18))
+        self._attach_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: transparent;
+                border: none;
+                border-radius: 16px;
+                padding: 0;
+            }}
+            QPushButton:hover {{
+                background-color: {Theme.COLORS['bg_hover']};
+            }}
+        """)
+        self._attach_btn.clicked.connect(self._on_attach_clicked)
+        input_frame_layout.addWidget(self._attach_btn, alignment=QtCore.Qt.AlignBottom)
 
         # Text input
         self._input = QtWidgets.QTextEdit()
@@ -480,6 +520,8 @@ class ChatWidget(QtWidgets.QWidget):
             }}
         """)
         self._input.installEventFilter(self)
+        self._input.setAcceptDrops(True)
+        self._input.viewport().installEventFilter(self)
         input_frame_layout.addWidget(self._input, stretch=1)
 
         # Send button
@@ -511,8 +553,18 @@ class ChatWidget(QtWidgets.QWidget):
 
         input_layout.addWidget(input_frame)
 
+        # Thumbnail strip for attached images (hidden by default)
+        self._thumb_strip = QtWidgets.QWidget()
+        self._thumb_strip.setStyleSheet("background: transparent;")
+        self._thumb_strip_layout = QtWidgets.QHBoxLayout(self._thumb_strip)
+        self._thumb_strip_layout.setContentsMargins(4, 0, 4, 0)
+        self._thumb_strip_layout.setSpacing(6)
+        self._thumb_strip_layout.addStretch()
+        self._thumb_strip.hide()
+        input_layout.addWidget(self._thumb_strip)
+
         # Hint text
-        hint = QtWidgets.QLabel("Enter to send  ·  Shift+Enter for new line")
+        hint = QtWidgets.QLabel("Enter to send  ·  Shift+Enter for new line  ·  Paste image with Ctrl+V")
         hint.setStyleSheet(f"""
             color: {Theme.COLORS['text_muted']};
             font-size: {Theme.FONTS['size_xs']};
@@ -529,7 +581,8 @@ class ChatWidget(QtWidgets.QWidget):
         self._streaming_controller.streamingComplete.connect(self._on_streaming_complete)
 
     def eventFilter(self, obj, event):
-        """Handle Enter key in input."""
+        """Handle Enter key, Ctrl+V paste, and drag-drop in input."""
+
         if obj == self._input and event.type() == QtCore.QEvent.KeyPress:
             if event.key() == QtCore.Qt.Key_Return:
                 if event.modifiers() & QtCore.Qt.ShiftModifier:
@@ -537,21 +590,217 @@ class ChatWidget(QtWidgets.QWidget):
                 else:
                     self._on_send()
                     return True
+            # Intercept Ctrl+V to check for image paste
+            if (event.key() == QtCore.Qt.Key_V
+                    and event.modifiers() & QtCore.Qt.ControlModifier):
+                clipboard = QtWidgets.QApplication.clipboard()
+                mime = clipboard.mimeData()
+                if mime:
+                    FreeCAD.Console.PrintMessage(
+                        f"DrawingAssistant: Clipboard Ctrl+V — "
+                        f"hasImage={mime.hasImage()}, hasUrls={mime.hasUrls()}, "
+                        f"formats={list(mime.formats())}\n"
+                    )
+                    # Try raw image data first
+                    if mime.hasImage():
+                        image = QtGui.QImage(mime.imageData())
+                        if not image.isNull():
+                            self._add_image(image)
+                            return True  # Consumed — don't paste text
+                    # Try file URLs (screenshot tools often copy as file URL)
+                    if mime.hasUrls():
+                        added_any = False
+                        for url in mime.urls():
+                            path = url.toLocalFile()
+                            if path and self._is_supported_image(path):
+                                image = QtGui.QImage(path)
+                                if not image.isNull():
+                                    self._add_image(image)
+                                    added_any = True
+                        if added_any:
+                            return True
+                # Fall through to normal text paste
+
+        # Handle drag-drop on input viewport
+        if obj == self._input.viewport():
+            if event.type() == QtCore.QEvent.DragEnter:
+                mime = event.mimeData()
+                if mime.hasUrls() or mime.hasImage():
+                    event.acceptProposedAction()
+                    return True
+            elif event.type() == QtCore.QEvent.Drop:
+                mime = event.mimeData()
+                if mime.hasImage():
+                    image = QtGui.QImage(mime.imageData())
+                    if not image.isNull():
+                        self._add_image(image)
+                        return True
+                elif mime.hasUrls():
+                    for url in mime.urls():
+                        path = url.toLocalFile()
+                        if path and self._is_supported_image(path):
+                            image = QtGui.QImage(path)
+                            if not image.isNull():
+                                self._add_image(image)
+                    return True
+
         return super().eventFilter(obj, event)
 
     def _on_send(self):
-        """Handle send button click."""
+        """Handle send button click or stop button click.
+
+        In stop mode, emits stopRequested. Otherwise clears input + thumbnails
+        immediately (visual feedback), then emits signal with (text, images).
+        The user message is NOT added to the chat here — DrawingPanel._on_send()
+        adds it after saving images to disk so the MessageCard is created with
+        image_paths already set.
+        """
+        if self._stop_mode:
+            self.stopRequested.emit()
+            return
+
         text = self._input.toPlainText().strip()
-        if not text:
+        has_images = len(self._pending_images) > 0
+        FreeCAD.Console.PrintMessage(
+            f"DrawingAssistant: ChatWidget._on_send() — "
+            f"text='{text[:50]}', pending_images={len(self._pending_images)}\n"
+        )
+        if not text and not has_images:
             return
 
         self._input.clear()
-        self._chat_list.add_message(text, MessageRole.USER)
-        self.messageSubmitted.emit(text)
 
-    def add_user_message(self, text: str):
+        # Grab images before clearing the thumbnail strip
+        images = [img for img, _ in self._pending_images]
+        FreeCAD.Console.PrintMessage(
+            f"DrawingAssistant: Sending {len(images)} images via signal\n"
+        )
+
+        self._clear_images()
+        self.messageSubmitted.emit(text, images)
+
+    # -- Image attachment methods --
+
+    def _on_attach_clicked(self):
+        """Open file dialog to pick an image."""
+        paths, _ = QtWidgets.QFileDialog.getOpenFileNames(
+            self, "Attach Image", "",
+            "Images (*.png *.jpg *.jpeg *.gif *.webp *.bmp);;All Files (*)",
+        )
+        for path in paths:
+            image = QtGui.QImage(path)
+            if not image.isNull():
+                self._add_image(image)
+
+    def _is_supported_image(self, path: str) -> bool:
+        """Check if file path is a supported image format."""
+        from pathlib import Path as P
+        return P(path).suffix.lower() in self._SUPPORTED_IMAGE_EXTS
+
+    def _add_image(self, image: QtGui.QImage):
+        """Add an image to the pending attachments."""
+        FreeCAD.Console.PrintMessage(
+            f"DrawingAssistant: _add_image() — size={image.width()}x{image.height()}, "
+            f"isNull={image.isNull()}\n"
+        )
+        # Downscale very large images to save memory
+        max_dim = 2048
+        if image.width() > max_dim or image.height() > max_dim:
+            image = image.scaled(
+                max_dim, max_dim,
+                QtCore.Qt.KeepAspectRatio,
+                QtCore.Qt.SmoothTransformation,
+            )
+
+        # Create thumbnail (64x64, keep aspect ratio)
+        pixmap = QtGui.QPixmap.fromImage(image)
+        thumb = pixmap.scaled(
+            64, 64,
+            QtCore.Qt.KeepAspectRatio,
+            QtCore.Qt.SmoothTransformation,
+        )
+        self._pending_images.append((image, thumb))
+        FreeCAD.Console.PrintMessage(
+            f"DrawingAssistant: _pending_images now has {len(self._pending_images)} items\n"
+        )
+        self._rebuild_thumbnail_strip()
+        self._thumb_strip.show()
+
+    def _rebuild_thumbnail_strip(self):
+        """Rebuild all thumbnail widgets from _pending_images."""
+        # Remove existing widgets (keep the trailing stretch)
+        while self._thumb_strip_layout.count() > 1:
+            item = self._thumb_strip_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
+        for idx, (_, thumb) in enumerate(self._pending_images):
+            container = QtWidgets.QFrame()
+            container.setFixedSize(72, 72)
+            container.setStyleSheet(f"""
+                QFrame {{
+                    background-color: {Theme.COLORS['bg_tertiary']};
+                    border: 1px solid {Theme.COLORS['border_default']};
+                    border-radius: {Theme.RADIUS['sm']};
+                }}
+            """)
+
+            # Image label (centered)
+            label = QtWidgets.QLabel(container)
+            label.setPixmap(thumb)
+            label.setAlignment(QtCore.Qt.AlignCenter)
+            label.setGeometry(4, 4, 64, 64)
+
+            # Close button (top-right corner)
+            close_btn = QtWidgets.QPushButton("\u00d7", container)  # × symbol
+            close_btn.setFixedSize(18, 18)
+            close_btn.setCursor(QtCore.Qt.PointingHandCursor)
+            close_btn.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: {Theme.COLORS['bg_secondary']};
+                    color: {Theme.COLORS['text_muted']};
+                    border: 1px solid {Theme.COLORS['border_default']};
+                    border-radius: 9px;
+                    font-size: 11px;
+                    font-weight: bold;
+                    padding: 0;
+                }}
+                QPushButton:hover {{
+                    background-color: {Theme.COLORS['accent_error']};
+                    color: white;
+                }}
+            """)
+            i = idx  # capture for lambda
+            close_btn.clicked.connect(lambda checked=False, ii=i: self._remove_image(ii))
+            close_btn.move(52, 2)
+            close_btn.raise_()
+
+            # Insert before the trailing stretch
+            self._thumb_strip_layout.insertWidget(
+                self._thumb_strip_layout.count() - 1, container
+            )
+
+    def _remove_image(self, index: int):
+        """Remove an image from pending attachments."""
+        if 0 <= index < len(self._pending_images):
+            self._pending_images.pop(index)
+        self._rebuild_thumbnail_strip()
+        if not self._pending_images:
+            self._thumb_strip.hide()
+
+    def _clear_images(self):
+        """Clear all pending images and hide the thumbnail strip."""
+        self._pending_images.clear()
+        # Remove all thumbnail widgets (except the trailing stretch)
+        while self._thumb_strip_layout.count() > 1:
+            item = self._thumb_strip_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        self._thumb_strip.hide()
+
+    def add_user_message(self, text: str, image_paths: list = None):
         """Add a user message programmatically."""
-        self._chat_list.add_message(text, MessageRole.USER)
+        self._chat_list.add_message(text, MessageRole.USER, image_paths=image_paths or [])
 
     def add_assistant_message(self, text: str, stream: bool = True, debug_info: dict = None,
                               tool_calls: List[Dict] = None):
@@ -601,6 +850,7 @@ class ChatWidget(QtWidgets.QWidget):
         role = msg_dict.get("role", "system")
         text = msg_dict.get("text", "")
         changes = msg_dict.get("changes")
+        image_paths = msg_dict.get("image_paths", [])
 
         if changes:
             self.add_change_message(changes)
@@ -612,7 +862,7 @@ class ChatWidget(QtWidgets.QWidget):
         debug_info = msg_dict.get("debug_info") if show_debug else None
 
         if role == MessageRole.USER:
-            self.add_user_message(text)
+            self._chat_list.add_message(text, MessageRole.USER, image_paths=image_paths)
         elif role == MessageRole.ASSISTANT:
             self.add_assistant_message(text, stream=False, debug_info=debug_info)
         elif role == MessageRole.ERROR:
@@ -635,9 +885,67 @@ class ChatWidget(QtWidgets.QWidget):
         self._chat_list.set_progress_reviewing()
 
     def set_input_enabled(self, enabled: bool):
-        """Enable/disable input."""
+        """Enable/disable input and toggle Send/Stop button mode."""
         self._input.setEnabled(enabled)
-        self._send_btn.setEnabled(enabled)
+        if enabled:
+            self.set_stop_mode(False)
+        else:
+            self.set_stop_mode(True)
+
+    def set_stop_mode(self, active: bool):
+        """Toggle the send button between Send and Stop modes.
+
+        In Stop mode, the button is enabled and styled distinctly to indicate
+        the user can cancel the running request.
+        """
+        if active == self._stop_mode:
+            return
+        self._stop_mode = active
+
+        if active:
+            self._send_btn.setText("Stop")
+            self._send_btn.setEnabled(True)
+            self._send_btn.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: {Theme.COLORS['bg_tertiary']};
+                    color: {Theme.COLORS['text_secondary']};
+                    border: 1px solid {Theme.COLORS['border_default']};
+                    border-radius: {Theme.RADIUS['md']};
+                    font-weight: {Theme.FONTS['weight_medium']};
+                    font-size: {Theme.FONTS['size_base']};
+                }}
+                QPushButton:hover {{
+                    background-color: {Theme.COLORS['error_bg']};
+                    color: {Theme.COLORS['error_text']};
+                    border-color: {Theme.COLORS['error_border']};
+                }}
+                QPushButton:pressed {{
+                    background-color: {Theme.COLORS['error_border']};
+                }}
+            """)
+        else:
+            self._send_btn.setText("Send")
+            self._send_btn.setEnabled(True)
+            self._send_btn.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: {Theme.COLORS['accent_primary']};
+                    color: #ffffff;
+                    border: none;
+                    border-radius: {Theme.RADIUS['md']};
+                    font-weight: {Theme.FONTS['weight_medium']};
+                    font-size: {Theme.FONTS['size_base']};
+                }}
+                QPushButton:hover {{
+                    background-color: {Theme.COLORS['accent_primary_hover']};
+                }}
+                QPushButton:pressed {{
+                    background-color: {Theme.COLORS['accent_primary']};
+                }}
+                QPushButton:disabled {{
+                    background-color: {Theme.COLORS['bg_tertiary']};
+                    color: {Theme.COLORS['text_muted']};
+                }}
+            """)
 
     def clear_chat(self):
         """Clear all messages."""

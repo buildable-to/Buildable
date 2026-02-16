@@ -30,6 +30,7 @@ class ChatMessage:
     is_streaming: bool = False
     displayed_text: str = ""  # For streaming animation
     changes: Optional[Dict[str, Any]] = None  # Change visualization data
+    image_paths: List[str] = field(default_factory=list)  # Saved image file paths
 
     def __post_init__(self):
         if not self.displayed_text:
@@ -140,7 +141,8 @@ class ChatMessageModel(QtCore.QAbstractListModel):
         }
 
     def add_message(self, text: str, role: str, is_streaming: bool = False,
-                    changes: Optional[Dict[str, Any]] = None) -> int:
+                    changes: Optional[Dict[str, Any]] = None,
+                    image_paths: Optional[List[str]] = None) -> int:
         """Add a new message and return its index."""
         row = len(self._messages)
         self.beginInsertRows(QtCore.QModelIndex(), row, row)
@@ -150,7 +152,8 @@ class ChatMessageModel(QtCore.QAbstractListModel):
             role=role,
             is_streaming=is_streaming,
             displayed_text="" if is_streaming else text,
-            changes=changes
+            changes=changes,
+            image_paths=image_paths or [],
         )
         self._messages.append(message)
 
@@ -205,10 +208,10 @@ class ChatMessageModel(QtCore.QAbstractListModel):
         history = []
         for msg in self._messages:
             if msg.role in (MessageRole.USER, MessageRole.ASSISTANT):
-                history.append({
-                    "role": msg.role,
-                    "content": msg.text
-                })
+                entry = {"role": msg.role, "content": msg.text}
+                if msg.image_paths:
+                    entry["image_paths"] = msg.image_paths
+                history.append(entry)
         return history[-20:]  # Last 10 exchanges
 
     def message_count(self) -> int:

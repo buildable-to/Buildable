@@ -10,6 +10,7 @@ Official documentation: https://code.claude.com/docs/en/headless
 
 import json
 import os
+import signal
 import shutil
 import subprocess
 import sys
@@ -256,6 +257,10 @@ class ClaudeCodeBackend:
         # Signature: on_tool_call(tool_name: str, tool_input: dict)
         self.on_tool_call = None
 
+        # Active subprocess handle (for cancellation via SIGINT)
+        self._process: Optional[subprocess.Popen] = None
+        self._cancelled = False  # Set by cancel(), checked after process exits
+
     def chat(
         self,
         user_message: str,
@@ -314,6 +319,7 @@ class ClaudeCodeBackend:
         # Reset state for this request
         self.last_tool_calls = []
         self.edited_files = []
+        self._cancelled = False
 
         start_time = time.time()
         try:
@@ -337,6 +343,7 @@ class ClaudeCodeBackend:
                 cwd=cwd,
                 **kwargs
             )
+            self._process = process
 
             # Write prompt to stdin and close
             process.stdin.write(prompt)
@@ -403,11 +410,30 @@ class ClaudeCodeBackend:
                         return f"# Error: {error_msg}"
 
             # Wait for process to complete
-            process.wait(timeout=180)
+            # Use shorter timeout if cancelled (SIGINT should exit quickly)
+            wait_timeout = 10 if self._cancelled else 180
+            try:
+                process.wait(timeout=wait_timeout)
+            except subprocess.TimeoutExpired:
+                # Process didn't exit in time — force kill
+                FreeCAD.Console.PrintWarning(
+                    "DrawingAssistant: Process didn't exit after "
+                    f"{wait_timeout}s, killing\n"
+                )
+                process.kill()
+                process.wait(timeout=5)
+
             self.last_duration_ms = (time.time() - start_time) * 1000
 
             # Store tool calls for UI access
             self.last_tool_calls = tool_calls
+
+            # Check if we cancelled this request
+            if self._cancelled:
+                FreeCAD.Console.PrintMessage(
+                    "DrawingAssistant: Claude Code request was cancelled\n"
+                )
+                return None  # Sentinel: cancelled, not an error
 
             # Track which page files were edited (for direct source editing flow)
             self.edited_files = []
@@ -437,11 +463,6 @@ class ClaudeCodeBackend:
 
             return self._clean_response(result_text)
 
-        except subprocess.TimeoutExpired:
-            self.last_duration_ms = (time.time() - start_time) * 1000
-            FreeCAD.Console.PrintError("DrawingAssistant: Claude Code request timed out\n")
-            return "# Error: Request timed out"
-
         except json.JSONDecodeError as e:
             FreeCAD.Console.PrintError(f"DrawingAssistant: Failed to parse Claude Code response: {e}\n")
             return f"# Error: Failed to parse response: {e}"
@@ -453,6 +474,23 @@ class ClaudeCodeBackend:
         except Exception as e:
             FreeCAD.Console.PrintError(f"DrawingAssistant: Claude Code error: {e}\n")
             return f"# Error: {e}"
+
+        finally:
+            self._process = None
+
+    def cancel(self):
+        """Send SIGINT to the running Claude Code process for graceful interruption.
+
+        Claude Code saves session state on SIGINT, so --resume will continue
+        the conversation including the interrupted turn.
+        """
+        self._cancelled = True
+        if self._process and self._process.poll() is None:
+            FreeCAD.Console.PrintMessage("DrawingAssistant: Sending SIGINT to Claude Code process\n")
+            if sys.platform == "win32":
+                self._process.terminate()
+            else:
+                self._process.send_signal(signal.SIGINT)
 
     def _build_prompt(self, message: str, context: str,
                        multi_angle_screenshots: list = None) -> str:
@@ -473,16 +511,26 @@ class ClaudeCodeBackend:
             parts.append(f"## Document State\n{context}")
             parts.append("")
 
-        # Top view screenshot (for visual context on user requests)
+        # Screenshots (user-attached + auto-generated)
         if multi_angle_screenshots:
-            parts.append("### Current state:")
-            for path in multi_angle_screenshots:
-                filename = Path(path).name
-                if "review_top" in filename:
-                    parts.append(f"- Top view (Draft geometry): {path}")
-                else:
-                    parts.append(f"- {filename}: {path}")
-            parts.append("")
+            user_images = [p for p in multi_angle_screenshots if "/user_uploads/" in p]
+            auto_images = [p for p in multi_angle_screenshots if "/user_uploads/" not in p]
+
+            if user_images:
+                parts.append("### User-attached images:")
+                for path in user_images:
+                    parts.append(f"- {path}")
+                parts.append("")
+
+            if auto_images:
+                parts.append("### Current state:")
+                for path in auto_images:
+                    filename = Path(path).name
+                    if "review_top" in filename:
+                        parts.append(f"- Top view (Draft geometry): {path}")
+                    else:
+                        parts.append(f"- {filename}: {path}")
+                parts.append("")
 
         return "\n".join(parts)
 
