@@ -98,13 +98,14 @@ class LLMWorker(QtCore.QThread):
     tool_call = QtCore.Signal(str, dict)  # For progress indicator updates
 
     def __init__(self, llm, user_input, context, conversation,
-                 multi_angle_screenshots=None):
+                 multi_angle_screenshots=None, permission_mode=None):
         super().__init__()
         self.llm = llm
         self.user_input = user_input
         self.context = context
         self.conversation = conversation
         self.multi_angle_screenshots = multi_angle_screenshots
+        self.permission_mode = permission_mode
 
     def run(self):
         try:
@@ -115,7 +116,8 @@ class LLMWorker(QtCore.QThread):
 
             response = self.llm.chat(
                 self.user_input, self.context, self.conversation,
-                multi_angle_screenshots=self.multi_angle_screenshots
+                multi_angle_screenshots=self.multi_angle_screenshots,
+                permission_mode=self.permission_mode,
             )
             if response is None:
                 # Backend returned None = request was cancelled
@@ -724,23 +726,23 @@ class DrawingAssistantDockWidget(QtWidgets.QDockWidget):
         self._plan_mode_request = self.plan_mode_action.isChecked()
 
         if self._plan_mode_request:
-            # Phase 1: Request plan only
+            # Phase 1: Plan only (read-only via --permission-mode plan)
             self._plan_user_request = user_input
-            plan_prompt = f"""PLAN MODE: Analyze this request and create an execution plan.
+            plan_prompt = f"""Analyze this request and create a step-by-step execution plan.
+Describe each step in engineering terms (dimensions, materials, specifications).
+Read existing page files to understand the current drawing state.
 
 User request: {user_input}
 
-Output ONLY a plan in this format:
+Output your plan in this format:
 ## Plan
 1. **[Action]**: [Description of what will be created/modified]
 2. **[Action]**: [Description]
-...
-
-Do NOT write any code. Only output the numbered plan steps."""
+..."""
 
             self.worker = LLMWorker(
                 self.llm, plan_prompt, context, conversation,
-                all_screenshots
+                all_screenshots, permission_mode="plan"
             )
         else:
             # Normal mode: request code directly
@@ -802,6 +804,10 @@ Do NOT write any code. Only output the numbered plan steps."""
         """Handle successful LLM response - create preview or show plan."""
         self._chat.hide_typing()
         self._chat.set_input_enabled(True)
+
+        # Clear plan state (safe to call even if not in plan mode)
+        self._pending_plan = None
+        self._plan_user_request = None
 
         self._last_code = response
 
