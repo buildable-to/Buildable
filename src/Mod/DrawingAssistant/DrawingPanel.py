@@ -98,14 +98,14 @@ class LLMWorker(QtCore.QThread):
     tool_call = QtCore.Signal(str, dict)  # For progress indicator updates
 
     def __init__(self, llm, user_input, context, conversation,
-                 multi_angle_screenshots=None, permission_mode=None):
+                 multi_angle_screenshots=None, read_only=False):
         super().__init__()
         self.llm = llm
         self.user_input = user_input
         self.context = context
         self.conversation = conversation
         self.multi_angle_screenshots = multi_angle_screenshots
-        self.permission_mode = permission_mode
+        self.read_only = read_only
 
     def run(self):
         try:
@@ -117,7 +117,7 @@ class LLMWorker(QtCore.QThread):
             response = self.llm.chat(
                 self.user_input, self.context, self.conversation,
                 multi_angle_screenshots=self.multi_angle_screenshots,
-                permission_mode=self.permission_mode,
+                read_only=self.read_only,
             )
             if response is None:
                 # Backend returned None = request was cancelled
@@ -728,21 +728,23 @@ class DrawingAssistantDockWidget(QtWidgets.QDockWidget):
         if self._plan_mode_request:
             # Phase 1: Plan only (read-only via --permission-mode plan)
             self._plan_user_request = user_input
-            plan_prompt = f"""Analyze this request and create a step-by-step execution plan.
-Describe each step in engineering terms (dimensions, materials, specifications).
-Read existing page files to understand the current drawing state.
+            plan_prompt = f"""Create a detailed execution plan for this drawing request.
 
 User request: {user_input}
 
-Output your plan in this format:
+Read existing page files first to understand the current state, then output a numbered plan.
+Each step should specify exact geometry, dimensions (in mm), and positions.
+Include steps for geometry creation, sections/details, dimensions, annotations, and sheet layout.
+
+Format:
 ## Plan
-1. **[Action]**: [Description of what will be created/modified]
-2. **[Action]**: [Description]
+1. **Action**: Specific description with numbers
+2. **Action**: Description
 ..."""
 
             self.worker = LLMWorker(
                 self.llm, plan_prompt, context, conversation,
-                all_screenshots, permission_mode="plan"
+                all_screenshots, read_only=True
             )
         else:
             # Normal mode: request code directly
