@@ -324,6 +324,39 @@ class ClaudeCodeBackend:
         system_prompt = FREECAD_SYSTEM_PROMPT_TEMPLATE.format(
             pages_dir=pages_dir or "(no project)",
         )
+
+        # Append engineer's project notes (from project.md)
+        if self.project_dir:
+            project_md = Path(self.project_dir) / "project.md"
+            if project_md.exists():
+                try:
+                    notes = project_md.read_text(encoding="utf-8").strip()
+                    if notes:
+                        system_prompt += (
+                            f"\n\n## Project Notes (from engineer)\n{notes}"
+                        )
+                except Exception:
+                    pass
+
+            # Append reference documents listing
+            ref_dir = Path(self.project_dir) / "reference_docs"
+            if ref_dir.exists():
+                docs = sorted(
+                    f for f in ref_dir.iterdir()
+                    if f.is_file() and not f.name.startswith(".")
+                )
+                if docs:
+                    listing = "\n".join(
+                        f"- {f.name} ({f.stat().st_size / 1024:.0f} KB)"
+                        for f in docs
+                    )
+                    system_prompt += (
+                        f"\n\n## Available Reference Documents\n{listing}\n"
+                        "Use the Read tool to consult these when relevant "
+                        "(in reference_docs/ directory). "
+                        "For PDFs, use the pages parameter."
+                    )
+
         cmd.extend(["--append-system-prompt", system_prompt])
         self.last_system_prompt = system_prompt
 

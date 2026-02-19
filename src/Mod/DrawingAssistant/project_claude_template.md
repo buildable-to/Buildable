@@ -1,5 +1,9 @@
 # FreeCAD Drawing Project
 
+## Project Context
+- `project.md` contains engineer-provided project notes (naming conventions, materials, rules). Follow these when creating drawings.
+- `reference_docs/` may contain project PDFs (calculations, specifications, floor plans). Use the Read tool to consult them when relevant.
+
 ## Execution Model
 All `*.py` files in `pages/` are executed together as one script.
 Execution order: underscore-prefixed files first, then alphabetical.
