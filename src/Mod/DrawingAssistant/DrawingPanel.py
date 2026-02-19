@@ -733,10 +733,11 @@ Current plan:
 User feedback: {user_input}
 
 Revise the plan based on this feedback. Output the complete revised numbered plan.
+Write for a structural engineer — describe what the drawing will show, not programming details.
 
 Format:
 ## Plan
-1. **Action**: Specific description with numbers
+1. **Action**: Description in plain engineering terms
 2. **Action**: Description
 ..."""
 
@@ -748,17 +749,17 @@ Format:
         elif self._chat.is_plan_mode():
             self._plan_mode_request = True
             self._plan_user_request = user_input
-            plan_prompt = f"""Create a detailed execution plan for this drawing request.
+            plan_prompt = f"""Create an execution plan for this drawing request.
 
 User request: {user_input}
 
 Read existing page files first to understand the current state, then output a numbered plan.
-Each step should specify exact geometry, dimensions (in mm), and positions.
-Include steps for geometry creation, sections/details, dimensions, annotations, and sheet layout.
+Write the plan for a structural engineer — describe what the drawing will show, not how the code works.
+Use engineering terms (dimensions, scales, sheet layout) not programming terms (file names, Python objects, coordinates).
 
 Format:
 ## Plan
-1. **Action**: Specific description with numbers
+1. **Action**: Description in plain engineering terms
 2. **Action**: Description
 ..."""
 
