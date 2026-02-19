@@ -29,6 +29,7 @@ class ChatListWidget(QtWidgets.QScrollArea):
     planApproved = QtCore.Signal(str)  # Emits the approved plan text
     planEdited = QtCore.Signal(str)    # Emits the edited plan text
     planCancelled = QtCore.Signal()
+    planKeepPlanning = QtCore.Signal(str)  # Emits current plan text for refinement
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -261,6 +262,7 @@ class ChatListWidget(QtWidgets.QScrollArea):
         widget.planApproved.connect(lambda: self._on_plan_approved(widget.get_plan_text(), widget))
         widget.planEdited.connect(lambda edited: self._on_plan_edited(edited, widget))
         widget.planCancelled.connect(lambda: self._on_plan_cancelled(widget))
+        widget.planKeepPlanning.connect(lambda: self._on_plan_keep_planning(widget))
 
         self._layout.insertWidget(self._layout.count() - 1, widget)
         self._message_widgets.append(widget)
@@ -289,6 +291,13 @@ class ChatListWidget(QtWidgets.QScrollArea):
         if widget in self._active_plans:
             self._active_plans.remove(widget)
         self.planCancelled.emit()
+
+    def _on_plan_keep_planning(self, widget: PlanWidget):
+        """Handle keep planning — dim plan, re-enable input for refinement."""
+        widget.set_disabled(True)
+        if widget in self._active_plans:
+            self._active_plans.remove(widget)
+        self.planKeepPlanning.emit(widget.get_plan_text())
 
     def add_activity_message(self, tool_calls: List[Dict]):
         """Add an activity widget showing tool calls.
@@ -410,6 +419,7 @@ class ChatWidget(QtWidgets.QWidget):
     planApproved = QtCore.Signal(str)  # Emits the approved plan text
     planEdited = QtCore.Signal(str)    # Emits the edited plan text
     planCancelled = QtCore.Signal()
+    planKeepPlanning = QtCore.Signal(str)  # Emits current plan text for refinement
     stopRequested = QtCore.Signal()  # Emitted when user clicks Stop
 
     _SUPPORTED_IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
@@ -439,6 +449,7 @@ class ChatWidget(QtWidgets.QWidget):
         self._chat_list.planApproved.connect(self.planApproved.emit)
         self._chat_list.planEdited.connect(self.planEdited.emit)
         self._chat_list.planCancelled.connect(self.planCancelled.emit)
+        self._chat_list.planKeepPlanning.connect(self.planKeepPlanning.emit)
         layout.addWidget(self._chat_list, stretch=1)
 
         # Input area container
