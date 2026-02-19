@@ -52,6 +52,50 @@ The critical insight that makes plan mode work:
 
 We use `--tools` for Phase 1 because it deterministically prevents Claude from calling `ExitPlanMode` (a built-in Claude Code tool that hijacks plan responses). The plan text comes back in the `result` field of the stream-json output.
 
+## Engineer-Friendly Plan Output
+
+Plans are shown to structural engineers, not programmers. The system prompt and plan prompts explicitly enforce this:
+
+**Allowed** in plan text:
+- Engineering terms: "draw a column cross-section", "add reinforcement details"
+- Dimensions in mm, scales (e.g. 1:50), sheet sizes (A3 Landscape)
+- Layout descriptions: "upper portion of the sheet", "below the title block"
+- Data tables with engineering values (marks, sizes, grades)
+
+**Forbidden** in plan text:
+- File names (`pages/01_column_sections.py`)
+- Python code or variable names
+- FreeCAD object types (`DrawViewDraft`, `DocumentObjectGroup`, `DrawSVGTemplate`)
+- Property names (`FontSize`, `LineSpacing`, `Scale`)
+- Coordinate positions (`X=200`, `Y=190`)
+
+This is enforced in three places:
+1. **System prompt** (`backends/claude_code.py`) — "Write the plan for a STRUCTURAL ENGINEER, not a programmer"
+2. **Plan prompt** (`DrawingPanel._on_send`) — "Use engineering terms, not programming terms"
+3. **Refinement prompt** (`DrawingPanel._on_send`) — "Write for a structural engineer"
+
+### Example Plan Output
+
+```
+## Plan
+
+1. **Create drawing sheet**: Set up an A3 Landscape sheet with the standard
+   ISO title block template, so that the title block and border are visible.
+
+2. **Fill in project title**: Enter "Luka Lortk's Project" into the title
+   block's project name field in the bottom-right corner of the sheet.
+
+3. **Create column schedule table**: Draw a column schedule table with the
+   following data:
+
+   | Mark | Width (mm) | Depth (mm) | Concrete Grade | Reinforcement |
+   |------|-----------|-----------|----------------|---------------|
+   | C1   | 400       | 400       | C30            | 8T16          |
+   | C2   | 500       | 500       | C30            | 8T20          |
+   | C3   | 600       | 600       | C30            | 12T20         |
+   | C4   | 600       | 800       | C30            | 12T25         |
+```
+
 ## Phase 1: Plan Generation
 
 **Trigger**: User has the "Plan" pill toggled on in the input bar when sending a message.
@@ -59,10 +103,15 @@ We use `--tools` for Phase 1 because it deterministically prevents Claude from c
 **DrawingPanel.py** (`_on_send`):
 ```python
 if self._chat.is_plan_mode():
-    plan_prompt = f"""Create a detailed execution plan for this drawing request.
+    self._plan_mode_request = True
+    plan_prompt = f"""Create an execution plan for this drawing request.
     User request: {user_input}
-    ...
-    """
+    Write the plan for a structural engineer — describe what the drawing will show,
+    not how the code works. Use engineering terms, not programming terms.
+    Format:
+    ## Plan
+    1. **Action**: Description in plain engineering terms
+    ..."""
     self.worker = LLMWorker(
         self.llm, plan_prompt, context, conversation,
         all_screenshots, read_only=True    # ← triggers --tools restriction
@@ -86,7 +135,7 @@ The plan text arrives in two possible locations:
 if self._plan_mode_request:
     self._plan_mode_request = False
     self._chat.add_plan_message(response, self._plan_user_request or "")
-    self._plan_pending_refinement = response  # Enable refinement on follow-up
+    self._plan_pending_refinement = response  # Enable refinement on ANY follow-up
     return
 ```
 
@@ -98,9 +147,16 @@ The widget provides two actions:
 - **Approve Plan** → `planApproved` signal → Phase 2 code generation
 - **Keep Planning** → `planKeepPlanning` signal → dims widget, re-enables input
 
-After showing a plan, `_plan_pending_refinement` is automatically set, so if the user types a follow-up message (with or without clicking "Keep Planning"), it triggers plan refinement instead of creating a new independent plan.
+### Signal Chain
+
+```
+PlanWidget.planApproved → ChatListWidget → ChatWidget → DrawingPanel._on_plan_approved
+PlanWidget.planKeepPlanning → ChatListWidget → ChatWidget → DrawingPanel._on_plan_keep_planning
+```
 
 ## Plan Refinement
+
+After showing a plan, `_plan_pending_refinement` is automatically set in `_on_response`. This means **any follow-up message** triggers plan refinement — the user does NOT need to click "Keep Planning" first. (The "Keep Planning" button also works, but is optional.)
 
 When the user sends a message while `_plan_pending_refinement` is set:
 
@@ -109,14 +165,17 @@ When the user sends a message while `_plan_pending_refinement` is set:
 if self._plan_pending_refinement:
     current_plan = self._plan_pending_refinement
     self._plan_pending_refinement = None
-    refinement_prompt = f"""The user wants to modify the current plan.
+    self._plan_mode_request = True
+    refinement_prompt = f"""The user wants to modify the current execution plan.
     Current plan: {current_plan}
     User feedback: {user_input}
-    Revise the plan based on this feedback..."""
+    Revise the plan based on this feedback.
+    Write for a structural engineer — describe what the drawing will show, not programming details.
+    ..."""
     self.worker = LLMWorker(self.llm, refinement_prompt, ..., read_only=True)
 ```
 
-The refined plan appears as a new PlanWidget, with the old one dimmed.
+The refined plan appears as a new PlanWidget, with the old one dimmed. Refinement can chain indefinitely — each new plan also sets `_plan_pending_refinement`.
 
 ## Phase 2: Code Generation
 
@@ -167,6 +226,6 @@ self._plan_worker: LLMWorker            # Phase 2 worker thread
 State transitions:
 - Phase 1 response → `_plan_mode_request = False`, `_plan_pending_refinement = response`
 - User approves → `_pending_plan = plan_text`, `_plan_pending_refinement = None`, Phase 2 starts
-- User sends follow-up → `_plan_pending_refinement` consumed, new Phase 1 (refinement)
-- "Keep Planning" click → `_plan_pending_refinement` re-set (already set automatically)
+- User sends follow-up (any message) → `_plan_pending_refinement` consumed, new Phase 1 (refinement)
+- "Keep Planning" click → dims current plan widget, re-enables input (refinement already enabled)
 - Cancel → all plan state cleared
