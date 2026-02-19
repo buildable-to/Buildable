@@ -512,7 +512,7 @@ class ChatWidget(QtWidgets.QWidget):
         self._plan_pill.setCursor(QtCore.Qt.PointingHandCursor)
         self._plan_pill.setToolTip("Plan mode: generate an editable plan before writing code")
         self._plan_pill_update_style()
-        self._plan_pill.toggled.connect(lambda: self._plan_pill_update_style())
+        self._plan_pill.toggled.connect(self._plan_pill_update_style)
         input_frame_layout.addWidget(self._plan_pill, alignment=QtCore.Qt.AlignBottom)
 
         # Text input
@@ -703,7 +703,7 @@ class ChatWidget(QtWidgets.QWidget):
             if not image.isNull():
                 self._add_image(image)
 
-    def _plan_pill_update_style(self):
+    def _plan_pill_update_style(self, _checked=None):
         """Update plan pill appearance based on checked state."""
         if self._plan_pill.isChecked():
             self._plan_pill.setStyleSheet(f"""
