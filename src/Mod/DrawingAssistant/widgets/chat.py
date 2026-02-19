@@ -27,7 +27,6 @@ class ChatListWidget(QtWidgets.QScrollArea):
     previewApproved = QtCore.Signal(str)
     previewCancelled = QtCore.Signal()
     planApproved = QtCore.Signal(str)  # Emits the approved plan text
-    planEdited = QtCore.Signal(str)    # Emits the edited plan text
     planCancelled = QtCore.Signal()
     planKeepPlanning = QtCore.Signal(str)  # Emits current plan text for refinement
 
@@ -260,7 +259,6 @@ class ChatListWidget(QtWidgets.QScrollArea):
 
         widget = PlanWidget(plan_text, user_request)
         widget.planApproved.connect(lambda: self._on_plan_approved(widget.get_plan_text(), widget))
-        widget.planEdited.connect(lambda edited: self._on_plan_edited(edited, widget))
         widget.planCancelled.connect(lambda: self._on_plan_cancelled(widget))
         widget.planKeepPlanning.connect(lambda: self._on_plan_keep_planning(widget))
 
@@ -277,13 +275,6 @@ class ChatListWidget(QtWidgets.QScrollArea):
         if widget in self._active_plans:
             self._active_plans.remove(widget)
         self.planApproved.emit(plan_text)
-
-    def _on_plan_edited(self, edited_text: str, widget: PlanWidget):
-        """Handle plan edit and approval."""
-        widget.set_disabled(True)
-        if widget in self._active_plans:
-            self._active_plans.remove(widget)
-        self.planEdited.emit(edited_text)
 
     def _on_plan_cancelled(self, widget: PlanWidget):
         """Handle plan cancellation."""
@@ -417,7 +408,6 @@ class ChatWidget(QtWidgets.QWidget):
     previewApproved = QtCore.Signal(str)
     previewCancelled = QtCore.Signal()
     planApproved = QtCore.Signal(str)  # Emits the approved plan text
-    planEdited = QtCore.Signal(str)    # Emits the edited plan text
     planCancelled = QtCore.Signal()
     planKeepPlanning = QtCore.Signal(str)  # Emits current plan text for refinement
     stopRequested = QtCore.Signal()  # Emitted when user clicks Stop
@@ -447,7 +437,6 @@ class ChatWidget(QtWidgets.QWidget):
         self._chat_list.previewApproved.connect(self.previewApproved.emit)
         self._chat_list.previewCancelled.connect(self.previewCancelled.emit)
         self._chat_list.planApproved.connect(self.planApproved.emit)
-        self._chat_list.planEdited.connect(self.planEdited.emit)
         self._chat_list.planCancelled.connect(self.planCancelled.emit)
         self._chat_list.planKeepPlanning.connect(self.planKeepPlanning.emit)
         layout.addWidget(self._chat_list, stretch=1)

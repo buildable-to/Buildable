@@ -8,7 +8,7 @@ on the plan by typing follow-up messages, not by editing the text directly.
 """
 
 import re
-from PySide6 import QtCore, QtWidgets, QtGui
+from PySide6 import QtCore, QtWidgets
 from typing import List
 from .. import Theme
 from .message_delegate import _md_to_html
@@ -49,13 +49,11 @@ class PlanWidget(QtWidgets.QFrame):
 
     Signals:
         planApproved: User approved the plan
-        planEdited(str): (unused, kept for API compat)
         planCancelled: User cancelled the plan
         planKeepPlanning: User wants to refine the plan via follow-up message
     """
 
     planApproved = QtCore.Signal()
-    planEdited = QtCore.Signal(str)
     planCancelled = QtCore.Signal()
     planKeepPlanning = QtCore.Signal()
 
