@@ -27,9 +27,8 @@ class PlanStep:
 
         Expected format:
         ## Plan
-        1. **Action**: Description
-           - Objects: obj1, obj2
-           - Outcome: expected result
+        1. **Action**: Description (may span multiple lines)
+        2. Action: Description
 
         Args:
             plan_text: Raw plan text from LLM
@@ -38,25 +37,35 @@ class PlanStep:
             List of PlanStep objects
         """
         steps = []
-        # Match numbered steps: "1. **Action**: Description" or "1. Action: Description"
-        pattern = r'(\d+)\.\s+\*?\*?([^*:]+)\*?\*?:\s*([^\n]+)'
-        matches = re.findall(pattern, plan_text)
 
-        for match in matches:
-            number = int(match[0])
-            action = match[1].strip()
-            description = match[2].strip()
+        # Split text into chunks at numbered step boundaries
+        # Each chunk starts with "N. " (with optional leading whitespace)
+        chunks = re.split(r'(?=(?:^|\n)\s*\d+\.\s)', plan_text)
 
-            # Try to extract objects and outcome from following lines
-            objects = []
-            outcome = ""
+        for chunk in chunks:
+            chunk = chunk.strip()
+            if not chunk:
+                continue
+
+            # Try to parse: "N. **Action**: Description" or "N. Action: Description"
+            match = re.match(
+                r'(\d+)\.\s+\*?\*?([^*:\n]+?)\*?\*?\s*:\s*(.*)',
+                chunk,
+                re.DOTALL,
+            )
+            if not match:
+                continue
+
+            number = int(match.group(1))
+            action = match.group(2).strip()
+            # Join multi-line description into single line for display
+            raw_desc = match.group(3).strip()
+            description = " ".join(raw_desc.split())
 
             steps.append(PlanStep(
                 number=number,
                 action=action,
                 description=description,
-                objects=objects,
-                outcome=outcome
             ))
 
         return steps
