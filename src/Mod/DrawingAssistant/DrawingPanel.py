@@ -356,10 +356,6 @@ class DrawingAssistantDockWidget(QtWidgets.QDockWidget):
             "Claude reviews the result and can fix issues before showing to you"
         )
 
-        self.plan_mode_action = menu.addAction("Plan mode (2-phase)")
-        self.plan_mode_action.setCheckable(True)
-        self.plan_mode_action.setChecked(False)
-
         self.streaming_action = menu.addAction("Streaming animation")
         self.streaming_action.setCheckable(True)
         self.streaming_action.setChecked(True)
@@ -416,7 +412,7 @@ class DrawingAssistantDockWidget(QtWidgets.QDockWidget):
         # Save settings checkboxes state
         settings_state = {}
         for attr in ("context_action", "autorun_action", "auto_accept_action",
-                      "self_review_action", "plan_mode_action", "streaming_action", "debug_action"):
+                      "self_review_action", "streaming_action", "debug_action"):
             try:
                 settings_state[attr] = getattr(self, attr).isChecked()
             except Exception:
@@ -723,7 +719,7 @@ class DrawingAssistantDockWidget(QtWidgets.QDockWidget):
             all_screenshots.extend(user_image_paths)
 
         # Check if plan mode is enabled
-        self._plan_mode_request = self.plan_mode_action.isChecked()
+        self._plan_mode_request = self._chat.is_plan_mode()
 
         if self._plan_mode_request:
             # Phase 1: Plan only (read-only via --permission-mode plan)
