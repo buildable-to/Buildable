@@ -3,14 +3,15 @@
 Plan Widget - Shows AI's execution plan for user approval before code generation.
 Part of the two-phase LLM flow: plan -> approve -> code -> preview -> execute.
 
-Design: A single editable text document. Users read the plan, edit freely if
-needed, then approve or cancel. No card splitting — just clean typography.
+Design: Rendered markdown display (same as assistant messages). User iterates
+on the plan by typing follow-up messages, not by editing the text directly.
 """
 
 import re
 from PySide6 import QtCore, QtWidgets, QtGui
 from typing import List
 from .. import Theme
+from .message_delegate import _md_to_html
 
 
 class PlanStep:
@@ -23,55 +24,40 @@ class PlanStep:
 
     @staticmethod
     def parse_plan(plan_text: str) -> List["PlanStep"]:
-        """Parse plan text into PlanStep objects.
-
-        Expected format:
-        ## Plan
-        1. **Action**: Description (may span multiple lines)
-        2. Action: Description
-        """
+        """Parse plan text to count steps."""
         steps = []
         chunks = re.split(r'(?=(?:^|\n)\s*\d+\.\s)', plan_text)
-
         for chunk in chunks:
             chunk = chunk.strip()
             if not chunk:
                 continue
-
             match = re.match(
                 r'(\d+)\.\s+\*?\*?([^*:\n]+?)\*?\*?\s*:\s*(.*)',
-                chunk,
-                re.DOTALL,
+                chunk, re.DOTALL,
             )
-            if not match:
-                continue
-
-            number = int(match.group(1))
-            action = match.group(2).strip()
-            raw_desc = match.group(3).strip()
-            description = " ".join(raw_desc.split())
-
-            steps.append(PlanStep(
-                number=number,
-                action=action,
-                description=description,
-            ))
-
+            if match:
+                steps.append(PlanStep(
+                    number=int(match.group(1)),
+                    action=match.group(2).strip(),
+                    description=" ".join(match.group(3).strip().split()),
+                ))
         return steps
 
 
 class PlanWidget(QtWidgets.QFrame):
-    """Execution plan as a single editable text document.
+    """Execution plan rendered as markdown with approve/iterate buttons.
 
     Signals:
-        planApproved: User approved the plan without edits
-        planEdited(str): User edited and approved, new text provided
+        planApproved: User approved the plan
+        planEdited(str): (unused, kept for API compat)
         planCancelled: User cancelled the plan
+        planKeepPlanning: User wants to refine the plan via follow-up message
     """
 
     planApproved = QtCore.Signal()
     planEdited = QtCore.Signal(str)
     planCancelled = QtCore.Signal()
+    planKeepPlanning = QtCore.Signal()
 
     def __init__(self, plan_text: str, user_request: str = "", parent=None):
         super().__init__(parent)
@@ -85,73 +71,68 @@ class PlanWidget(QtWidgets.QFrame):
         self.setObjectName("PlanWidget")
         self.setStyleSheet(f"""
             #PlanWidget {{
-                background-color: {Theme.COLORS['bg_secondary']};
-                border: 1px solid {Theme.COLORS['border_default']};
+                background-color: {Theme.COLORS['assistant_card_bg']};
+                border: 1px solid {Theme.COLORS['assistant_card_border']};
                 border-radius: {Theme.RADIUS['lg']};
             }}
         """)
 
         layout = QtWidgets.QVBoxLayout(self)
-        layout.setContentsMargins(16, 14, 16, 14)
-        layout.setSpacing(10)
+        layout.setContentsMargins(20, 16, 20, 16)
+        layout.setSpacing(12)
 
         # ── Header ──
-        header_layout = QtWidgets.QHBoxLayout()
-        header_layout.setSpacing(8)
+        header = QtWidgets.QHBoxLayout()
+        header.setSpacing(8)
 
-        title_label = QtWidgets.QLabel("Execution Plan")
-        title_label.setStyleSheet(f"""
-            font-size: {Theme.FONTS['size_base']};
+        title = QtWidgets.QLabel("Execution Plan")
+        title.setStyleSheet(f"""
+            font-size: {Theme.FONTS['size_sm']};
             font-weight: {Theme.FONTS['weight_semibold']};
-            color: {Theme.COLORS['text_primary']};
+            color: {Theme.COLORS['accent_primary']};
             background: transparent;
         """)
-        header_layout.addWidget(title_label)
+        header.addWidget(title)
 
-        count_text = f"{len(self._steps)} steps" if self._steps else ""
-        count_label = QtWidgets.QLabel(count_text)
-        count_label.setStyleSheet(f"""
-            color: {Theme.COLORS['text_muted']};
-            font-size: {Theme.FONTS['size_xs']};
-            background: transparent;
-        """)
-        header_layout.addWidget(count_label)
+        if self._steps:
+            count = QtWidgets.QLabel(f"{len(self._steps)} steps")
+            count.setStyleSheet(f"""
+                color: {Theme.COLORS['text_muted']};
+                font-size: {Theme.FONTS['size_xs']};
+                background: transparent;
+            """)
+            header.addWidget(count)
 
-        header_layout.addStretch()
-        layout.addLayout(header_layout)
+        header.addStretch()
+        layout.addLayout(header)
 
-        # ── Plan text editor ──
-        self._editor = QtWidgets.QPlainTextEdit()
-        self._editor.setPlainText(self._plan_text)
-        self._editor.setStyleSheet(f"""
-            QPlainTextEdit {{
-                background-color: {Theme.COLORS['bg_primary']};
-                color: {Theme.COLORS['text_secondary']};
-                border: 1px solid {Theme.COLORS['border_subtle']};
-                border-radius: {Theme.RADIUS['sm']};
-                padding: 12px;
-                font-family: {Theme.FONTS['family_sans']};
+        # ── Rendered markdown content ──
+        html = _md_to_html(self._plan_text)
+        self._content_label = QtWidgets.QLabel(html)
+        self._content_label.setTextFormat(QtCore.Qt.RichText)
+        self._content_label.setWordWrap(True)
+        self._content_label.setTextInteractionFlags(
+            QtCore.Qt.TextSelectableByMouse | QtCore.Qt.LinksAccessibleByMouse
+        )
+        self._content_label.setStyleSheet(f"""
+            QLabel {{
+                color: {Theme.COLORS['assistant_text']};
                 font-size: {Theme.FONTS['size_sm']};
-                selection-background-color: {Theme.COLORS['accent_primary']};
-            }}
-            QPlainTextEdit:focus {{
-                border-color: {Theme.COLORS['border_focus']};
+                line-height: {Theme.FONTS['line_height_normal']};
+                background: transparent;
             }}
         """)
-        # Size to content, with reasonable bounds
-        self._editor.setMinimumHeight(150)
-        self._editor.setMaximumHeight(450)
-        self._adjust_height()
-        self._editor.textChanged.connect(self._adjust_height)
-        layout.addWidget(self._editor)
+        layout.addWidget(self._content_label)
 
         # ── Buttons ──
-        btn_layout = QtWidgets.QHBoxLayout()
+        self._btn_container = QtWidgets.QWidget()
+        btn_layout = QtWidgets.QHBoxLayout(self._btn_container)
+        btn_layout.setContentsMargins(0, 4, 0, 0)
         btn_layout.setSpacing(10)
 
-        cancel_btn = QtWidgets.QPushButton("Cancel")
-        cancel_btn.setCursor(QtCore.Qt.PointingHandCursor)
-        cancel_btn.setStyleSheet(f"""
+        keep_btn = QtWidgets.QPushButton("Keep Planning")
+        keep_btn.setCursor(QtCore.Qt.PointingHandCursor)
+        keep_btn.setStyleSheet(f"""
             QPushButton {{
                 background-color: transparent;
                 color: {Theme.COLORS['text_secondary']};
@@ -166,8 +147,8 @@ class PlanWidget(QtWidgets.QFrame):
                 color: {Theme.COLORS['text_primary']};
             }}
         """)
-        cancel_btn.clicked.connect(self._on_cancel)
-        btn_layout.addWidget(cancel_btn)
+        keep_btn.clicked.connect(self._on_keep_planning)
+        btn_layout.addWidget(keep_btn)
 
         btn_layout.addStretch()
 
@@ -190,18 +171,10 @@ class PlanWidget(QtWidgets.QFrame):
         approve_btn.clicked.connect(self._on_approve)
         btn_layout.addWidget(approve_btn)
 
-        layout.addLayout(btn_layout)
-
-    def _adjust_height(self):
-        """Resize editor to fit content within min/max bounds."""
-        doc = self._editor.document()
-        # documentSize height + padding
-        content_height = int(doc.size().height()) + 30
-        clamped = max(150, min(450, content_height))
-        self._editor.setFixedHeight(clamped)
+        layout.addWidget(self._btn_container)
 
     def _setup_entry_animation(self):
-        """Setup fade-in animation."""
+        """Fade-in animation, removed after completion to not block events."""
         self._opacity_effect = QtWidgets.QGraphicsOpacityEffect(self)
         self.setGraphicsEffect(self._opacity_effect)
         self._opacity_effect.setOpacity(0.0)
@@ -211,40 +184,25 @@ class PlanWidget(QtWidgets.QFrame):
         self._fade_anim.setStartValue(0.0)
         self._fade_anim.setEndValue(1.0)
         self._fade_anim.setEasingCurve(QtCore.QEasingCurve.OutCubic)
-        self._fade_anim.finished.connect(self._remove_opacity_effect)
+        self._fade_anim.finished.connect(lambda: self.setGraphicsEffect(None))
         self._fade_anim.start()
 
-    def _remove_opacity_effect(self):
-        """Remove opacity effect so editor receives input events."""
-        self.setGraphicsEffect(None)
-
     def _on_approve(self):
-        """Handle approve — emit edited signal if text was changed."""
-        current = self._editor.toPlainText()
-        if current != self._plan_text:
-            self.planEdited.emit(current)
-        else:
-            self.planApproved.emit()
+        self.planApproved.emit()
 
-    def _on_cancel(self):
-        self.planCancelled.emit()
+    def _on_keep_planning(self):
+        self.planKeepPlanning.emit()
 
     def set_disabled(self, disabled: bool):
-        """Disable widget after approval/cancellation — visually dim it."""
+        """Dim widget and hide buttons after approval/cancellation."""
         if disabled:
-            self._editor.setReadOnly(True)
-            # Hide buttons, dim the whole widget
-            for btn in self.findChildren(QtWidgets.QPushButton):
-                btn.hide()
-            self._editor.setStyleSheet(f"""
-                QPlainTextEdit {{
-                    background-color: {Theme.COLORS['bg_tertiary']};
+            self._btn_container.hide()
+            self._content_label.setStyleSheet(f"""
+                QLabel {{
                     color: {Theme.COLORS['text_muted']};
-                    border: 1px solid {Theme.COLORS['border_subtle']};
-                    border-radius: {Theme.RADIUS['sm']};
-                    padding: 12px;
-                    font-family: {Theme.FONTS['family_sans']};
                     font-size: {Theme.FONTS['size_sm']};
+                    line-height: {Theme.FONTS['line_height_normal']};
+                    background: transparent;
                 }}
             """)
             self.setStyleSheet(f"""
@@ -256,5 +214,5 @@ class PlanWidget(QtWidgets.QFrame):
             """)
 
     def get_plan_text(self) -> str:
-        """Get current plan text (possibly edited)."""
-        return self._editor.toPlainText()
+        """Get the plan text."""
+        return self._plan_text
