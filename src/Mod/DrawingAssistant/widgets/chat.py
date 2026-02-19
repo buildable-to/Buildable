@@ -27,8 +27,8 @@ class ChatListWidget(QtWidgets.QScrollArea):
     previewApproved = QtCore.Signal(str)
     previewCancelled = QtCore.Signal()
     planApproved = QtCore.Signal(str)  # Emits the approved plan text
-    planEdited = QtCore.Signal(str)    # Emits the edited plan text
     planCancelled = QtCore.Signal()
+    planKeepPlanning = QtCore.Signal(str)  # Emits current plan text for refinement
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -258,9 +258,9 @@ class ChatListWidget(QtWidgets.QScrollArea):
         )
 
         widget = PlanWidget(plan_text, user_request)
-        widget.planApproved.connect(lambda: self._on_plan_approved(plan_text, widget))
-        widget.planEdited.connect(lambda edited: self._on_plan_edited(edited, widget))
+        widget.planApproved.connect(lambda: self._on_plan_approved(widget.get_plan_text(), widget))
         widget.planCancelled.connect(lambda: self._on_plan_cancelled(widget))
+        widget.planKeepPlanning.connect(lambda: self._on_plan_keep_planning(widget))
 
         self._layout.insertWidget(self._layout.count() - 1, widget)
         self._message_widgets.append(widget)
@@ -276,19 +276,19 @@ class ChatListWidget(QtWidgets.QScrollArea):
             self._active_plans.remove(widget)
         self.planApproved.emit(plan_text)
 
-    def _on_plan_edited(self, edited_text: str, widget: PlanWidget):
-        """Handle plan edit and approval."""
-        widget.set_disabled(True)
-        if widget in self._active_plans:
-            self._active_plans.remove(widget)
-        self.planEdited.emit(edited_text)
-
     def _on_plan_cancelled(self, widget: PlanWidget):
         """Handle plan cancellation."""
         widget.set_disabled(True)
         if widget in self._active_plans:
             self._active_plans.remove(widget)
         self.planCancelled.emit()
+
+    def _on_plan_keep_planning(self, widget: PlanWidget):
+        """Handle keep planning — dim plan, re-enable input for refinement."""
+        widget.set_disabled(True)
+        if widget in self._active_plans:
+            self._active_plans.remove(widget)
+        self.planKeepPlanning.emit(widget.get_plan_text())
 
     def add_activity_message(self, tool_calls: List[Dict]):
         """Add an activity widget showing tool calls.
@@ -408,8 +408,8 @@ class ChatWidget(QtWidgets.QWidget):
     previewApproved = QtCore.Signal(str)
     previewCancelled = QtCore.Signal()
     planApproved = QtCore.Signal(str)  # Emits the approved plan text
-    planEdited = QtCore.Signal(str)    # Emits the edited plan text
     planCancelled = QtCore.Signal()
+    planKeepPlanning = QtCore.Signal(str)  # Emits current plan text for refinement
     stopRequested = QtCore.Signal()  # Emitted when user clicks Stop
 
     _SUPPORTED_IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
@@ -437,8 +437,8 @@ class ChatWidget(QtWidgets.QWidget):
         self._chat_list.previewApproved.connect(self.previewApproved.emit)
         self._chat_list.previewCancelled.connect(self.previewCancelled.emit)
         self._chat_list.planApproved.connect(self.planApproved.emit)
-        self._chat_list.planEdited.connect(self.planEdited.emit)
         self._chat_list.planCancelled.connect(self.planCancelled.emit)
+        self._chat_list.planKeepPlanning.connect(self.planKeepPlanning.emit)
         layout.addWidget(self._chat_list, stretch=1)
 
         # Input area container
@@ -503,6 +503,17 @@ class ChatWidget(QtWidgets.QWidget):
         """)
         self._attach_btn.clicked.connect(self._on_attach_clicked)
         input_frame_layout.addWidget(self._attach_btn, alignment=QtCore.Qt.AlignBottom)
+
+        # Plan mode pill toggle
+        self._plan_pill = QtWidgets.QPushButton("Plan")
+        self._plan_pill.setCheckable(True)
+        self._plan_pill.setChecked(False)
+        self._plan_pill.setFixedHeight(26)
+        self._plan_pill.setCursor(QtCore.Qt.PointingHandCursor)
+        self._plan_pill.setToolTip("Plan mode: generate an editable plan before writing code")
+        self._plan_pill_update_style()
+        self._plan_pill.toggled.connect(self._plan_pill_update_style)
+        input_frame_layout.addWidget(self._plan_pill, alignment=QtCore.Qt.AlignBottom)
 
         # Text input
         self._input = QtWidgets.QTextEdit()
@@ -691,6 +702,44 @@ class ChatWidget(QtWidgets.QWidget):
             image = QtGui.QImage(path)
             if not image.isNull():
                 self._add_image(image)
+
+    def _plan_pill_update_style(self, _checked=None):
+        """Update plan pill appearance based on checked state."""
+        if self._plan_pill.isChecked():
+            self._plan_pill.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: {Theme.COLORS['accent_primary']};
+                    color: white;
+                    border: none;
+                    border-radius: 13px;
+                    padding: 0 12px;
+                    font-size: 11px;
+                    font-weight: {Theme.FONTS['weight_medium']};
+                }}
+                QPushButton:hover {{
+                    background-color: {Theme.COLORS['accent_primary_hover']};
+                }}
+            """)
+        else:
+            self._plan_pill.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: transparent;
+                    color: {Theme.COLORS['text_muted']};
+                    border: 1px solid {Theme.COLORS['border_default']};
+                    border-radius: 13px;
+                    padding: 0 12px;
+                    font-size: 11px;
+                    font-weight: {Theme.FONTS['weight_medium']};
+                }}
+                QPushButton:hover {{
+                    background-color: {Theme.COLORS['bg_hover']};
+                    color: {Theme.COLORS['text_secondary']};
+                }}
+            """)
+
+    def is_plan_mode(self) -> bool:
+        """Return whether plan mode pill is active."""
+        return self._plan_pill.isChecked()
 
     def _is_supported_image(self, path: str) -> bool:
         """Check if file path is a supported image format."""

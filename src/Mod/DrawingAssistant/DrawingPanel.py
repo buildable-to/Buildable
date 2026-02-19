@@ -98,13 +98,14 @@ class LLMWorker(QtCore.QThread):
     tool_call = QtCore.Signal(str, dict)  # For progress indicator updates
 
     def __init__(self, llm, user_input, context, conversation,
-                 multi_angle_screenshots=None):
+                 multi_angle_screenshots=None, read_only=False):
         super().__init__()
         self.llm = llm
         self.user_input = user_input
         self.context = context
         self.conversation = conversation
         self.multi_angle_screenshots = multi_angle_screenshots
+        self.read_only = read_only
 
     def run(self):
         try:
@@ -115,7 +116,8 @@ class LLMWorker(QtCore.QThread):
 
             response = self.llm.chat(
                 self.user_input, self.context, self.conversation,
-                multi_angle_screenshots=self.multi_angle_screenshots
+                multi_angle_screenshots=self.multi_angle_screenshots,
+                read_only=self.read_only,
             )
             if response is None:
                 # Backend returned None = request was cancelled
@@ -174,6 +176,7 @@ class DrawingAssistantDockWidget(QtWidgets.QDockWidget):
         self._pending_plan = None
         self._plan_user_request = None
         self._plan_mode_request = False
+        self._plan_pending_refinement = None  # Set when user clicks "Keep Planning"
 
         # Session manager for persisting conversations
         self.session_manager = SessionManager()
@@ -354,10 +357,6 @@ class DrawingAssistantDockWidget(QtWidgets.QDockWidget):
             "Claude reviews the result and can fix issues before showing to you"
         )
 
-        self.plan_mode_action = menu.addAction("Plan mode (2-phase)")
-        self.plan_mode_action.setCheckable(True)
-        self.plan_mode_action.setChecked(False)
-
         self.streaming_action = menu.addAction("Streaming animation")
         self.streaming_action.setCheckable(True)
         self.streaming_action.setChecked(True)
@@ -414,7 +413,7 @@ class DrawingAssistantDockWidget(QtWidgets.QDockWidget):
         # Save settings checkboxes state
         settings_state = {}
         for attr in ("context_action", "autorun_action", "auto_accept_action",
-                      "self_review_action", "plan_mode_action", "streaming_action", "debug_action"):
+                      "self_review_action", "streaming_action", "debug_action"):
             try:
                 settings_state[attr] = getattr(self, attr).isChecked()
             except Exception:
@@ -455,8 +454,8 @@ class DrawingAssistantDockWidget(QtWidgets.QDockWidget):
 
         # Plan mode signals
         self._chat.planApproved.connect(self._on_plan_approved)
-        self._chat.planEdited.connect(self._on_plan_edited)
         self._chat.planCancelled.connect(self._on_plan_cancelled)
+        self._chat.planKeepPlanning.connect(self._on_plan_keep_planning)
 
         # Connect to session manager for auto-save
         self._chat._chat_list._model.message_added.connect(
@@ -720,27 +719,53 @@ class DrawingAssistantDockWidget(QtWidgets.QDockWidget):
         if user_image_paths:
             all_screenshots.extend(user_image_paths)
 
-        # Check if plan mode is enabled
-        self._plan_mode_request = self.plan_mode_action.isChecked()
+        # Plan refinement: user typed a follow-up after "Keep Planning"
+        if self._plan_pending_refinement:
+            current_plan = self._plan_pending_refinement
+            self._plan_pending_refinement = None
+            self._plan_mode_request = True  # treat response as plan
 
-        if self._plan_mode_request:
-            # Phase 1: Request plan only
+            refinement_prompt = f"""The user wants to modify the current execution plan.
+
+Current plan:
+{current_plan}
+
+User feedback: {user_input}
+
+Revise the plan based on this feedback. Output the complete revised numbered plan.
+Write for a structural engineer — describe what the drawing will show, not programming details.
+
+Format:
+## Plan
+1. **Action**: Description in plain engineering terms
+2. **Action**: Description
+..."""
+
+            self.worker = LLMWorker(
+                self.llm, refinement_prompt, context, conversation,
+                all_screenshots, read_only=True
+            )
+        # Check if plan mode is enabled (new plan)
+        elif self._chat.is_plan_mode():
+            self._plan_mode_request = True
             self._plan_user_request = user_input
-            plan_prompt = f"""PLAN MODE: Analyze this request and create an execution plan.
+            plan_prompt = f"""Create an execution plan for this drawing request.
 
 User request: {user_input}
 
-Output ONLY a plan in this format:
-## Plan
-1. **[Action]**: [Description of what will be created/modified]
-2. **[Action]**: [Description]
-...
+Read existing page files first to understand the current state, then output a numbered plan.
+Write the plan for a structural engineer — describe what the drawing will show, not how the code works.
+Use engineering terms (dimensions, scales, sheet layout) not programming terms (file names, Python objects, coordinates).
 
-Do NOT write any code. Only output the numbered plan steps."""
+Format:
+## Plan
+1. **Action**: Description in plain engineering terms
+2. **Action**: Description
+..."""
 
             self.worker = LLMWorker(
                 self.llm, plan_prompt, context, conversation,
-                all_screenshots
+                all_screenshots, read_only=True
             )
         else:
             # Normal mode: request code directly
@@ -841,8 +866,13 @@ Do NOT write any code. Only output the numbered plan steps."""
             self._plan_mode_request = False
             FreeCAD.Console.PrintMessage("DrawingAssistant: Plan mode - showing plan for approval\n")
             self._chat.add_plan_message(response, self._plan_user_request or "")
+            self._plan_pending_refinement = response
             self.pending_input = None
             return
+
+        # Clear plan state after Phase 2 (not during Phase 1 — still needed)
+        self._pending_plan = None
+        self._plan_user_request = None
 
         # Check if Claude edited page files directly
         if getattr(self.llm, 'source_was_edited', False):
@@ -1458,6 +1488,7 @@ Read the relevant page file to understand what went wrong, then fix it."""
 
     def _on_plan_approved(self, plan_text: str):
         """Handle plan approval - request code generation (Phase 2)."""
+        self._plan_pending_refinement = None
         FreeCAD.Console.PrintMessage(
             "DrawingAssistant: Plan approved - requesting code generation\n"
         )
@@ -1465,30 +1496,35 @@ Read the relevant page file to understand what went wrong, then fix it."""
         self._pending_plan = plan_text
         self._generate_code_from_plan(plan_text)
 
-    def _on_plan_edited(self, edited_plan: str):
-        """Handle plan edit and approval."""
-        FreeCAD.Console.PrintMessage(
-            "DrawingAssistant: Plan edited and approved - requesting code generation\n"
-        )
-        ActivityLogger.log_plan_edited(edited=edited_plan)
-        self._pending_plan = edited_plan
-        self._generate_code_from_plan(edited_plan)
-
     def _on_plan_cancelled(self):
         """Handle plan cancellation."""
         FreeCAD.Console.PrintMessage("DrawingAssistant: Plan cancelled\n")
         ActivityLogger.log_plan_cancelled()
         self._pending_plan = None
         self._plan_user_request = None
+        self._plan_pending_refinement = None
         self._chat.add_system_message("Plan cancelled")
 
+    def _on_plan_keep_planning(self, plan_text: str):
+        """Handle keep planning — store plan for refinement on next user message."""
+        FreeCAD.Console.PrintMessage("DrawingAssistant: Keep planning - awaiting refinement\n")
+        self._plan_pending_refinement = plan_text
+
     def _generate_code_from_plan(self, plan_text: str):
-        """Request code generation based on approved plan (Phase 2)."""
+        """Request code generation based on approved plan (Phase 2).
+
+        Uses --resume to continue the same session from Phase 1, so Claude
+        retains all exploration context. No --permission-mode plan this time,
+        so Claude gets full Edit/Write access to implement the plan.
+        """
         if self._plan_worker and self._plan_worker.isRunning():
             return
 
         self._chat.show_typing(show_review_phase=self.self_review_action.isChecked())
         self._chat.set_input_enabled(False)
+
+        # Backup pages before Claude edits them (for restore on cancel/error)
+        SourceManager.backup_pages()
 
         context = ""
         if self.context_action.isChecked():
@@ -1518,48 +1554,16 @@ Read the relevant page file to understand what went wrong, then fix it."""
 
 Original request: {self._plan_user_request or ""}
 
-Now write the FreeCAD Python code to implement this plan exactly as specified.
-Return ONLY the Python code in a ```python code block."""
+Now implement this plan by editing the page files in pages/. Follow the same rules as for any drawing request."""
 
         self._plan_worker = LLMWorker(
             self.llm, code_prompt, context, conversation,
             self._get_top_view_screenshots()
         )
-        self._plan_worker.finished.connect(self._on_plan_code_response)
+        self._plan_worker.finished.connect(self._on_response)
         self._plan_worker.error.connect(self._on_error)
         self._plan_worker.cancelled.connect(self._on_cancelled)
         self._plan_worker.start()
-
-    def _on_plan_code_response(self, response: str):
-        """Handle code response from plan (Phase 2)."""
-        self._chat.hide_typing()
-        self._chat.set_input_enabled(True)
-
-        self._pending_plan = None
-        self._plan_user_request = None
-        self._last_code = response
-
-        self.session_manager.log_llm_request(
-            user_message="[Plan Phase 2: Code Generation]",
-            system_prompt=self.llm.last_system_prompt,
-            context=self.llm.last_context,
-            conversation_history=self.llm.last_conversation,
-            response=response,
-            model=self.llm.model,
-            api_url=self.llm.api_url,
-            duration_ms=self.llm.last_duration_ms,
-            success=True,
-            tool_calls=getattr(self.llm, 'last_tool_calls', None),
-            cost_usd=getattr(self.llm, 'last_cost', 0)
-        )
-
-        description, code = self._parse_response(response)
-
-        if not code.strip():
-            self._show_traditional_response(response)
-            return
-
-        self._attempt_preview_with_autofix(description, code, response)
 
     def _on_run_code(self, code: str, already_executed: bool = False):
         """Execute the provided code and display changes."""

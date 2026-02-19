@@ -140,6 +140,22 @@ The user controls file naming and project organization. Follow their conventions
 ## When the user asks a question
 Respond with text only. Do NOT read or edit any files.
 
+## When creating an execution plan (plan mode)
+The user has enabled plan mode. You MUST NOT edit any files.
+Read existing page files to understand the current drawing state, then create a step-by-step plan.
+
+IMPORTANT: Write the plan for a STRUCTURAL ENGINEER, not a programmer. The user does not know Python, FreeCAD internals, or file names.
+- Use engineering language: "draw a column cross-section", not "create Draft rectangles in pages/01_column_sections.py"
+- Describe WHAT the drawing will show, not HOW it will be coded
+- Include dimensions in mm, scales (e.g. 1:50), sheet sizes (A3 Landscape), and layout description
+- Do NOT mention: file names, Python code, FreeCAD object types (DrawViewDraft, DocumentObjectGroup), function names, variable names, property names (FontSize, LineSpacing), or coordinate positions (X=200, Y=190)
+- DO mention: what goes on the sheet, what scale, what dimensions, what annotations, what the final drawing will look like
+
+Format each step as:
+N. **Action**: Description in plain engineering terms
+
+A good plan has 4-8 steps.
+
 ## When the user requests a drawing change
 1. Read the relevant file(s) to understand the current state
 2. ALWAYS edit an existing file when the new content belongs to the same drawing group.
@@ -267,6 +283,7 @@ class ClaudeCodeBackend:
         context: str = "",
         history: list = None,
         multi_angle_screenshots: list = None,
+        read_only: bool = False,
     ) -> str:
         """Send message to Claude Code CLI and get response.
 
@@ -275,6 +292,7 @@ class ClaudeCodeBackend:
             context: Optional document context string (passed in prompt if no CLAUDE.md)
             history: Optional conversation history (not used - Claude Code manages sessions)
             multi_angle_screenshots: Optional list of file paths to multi-angle screenshots
+            read_only: If True, restrict to Read/Glob/Grep tools only (for plan mode)
 
         Returns:
             Generated response (Python code or text answer)
@@ -291,8 +309,14 @@ class ClaudeCodeBackend:
         claude_cmd = _get_claude_command()
         cmd = claude_cmd + ["-p", "--verbose", "--output-format", "stream-json"]
 
-        # Allow Edit and Write tools for direct page file modification
-        cmd.extend(["--allowedTools", "Read,Glob,Grep,Edit,Write"])
+        # Tool access: --tools restricts which tools exist in context,
+        # --allowedTools auto-approves tools without prompting.
+        # Phase 1 (read_only): --tools removes Edit/Write/ExitPlanMode entirely
+        # Phase 2 / normal: --allowedTools auto-approves all needed tools
+        if read_only:
+            cmd.extend(["--tools", "Read,Glob,Grep"])
+        else:
+            cmd.extend(["--allowedTools", "Read,Glob,Grep,Edit,Write"])
 
         # Build system prompt
         pages_dir = self._get_pages_dir()
@@ -351,6 +375,7 @@ class ClaudeCodeBackend:
 
             # Parse NDJSON stream line by line
             result_text = ""
+            assistant_text_parts = []  # Fallback: accumulate text from assistant events
             tool_calls = []
 
             for line in process.stdout:
@@ -365,11 +390,13 @@ class ClaudeCodeBackend:
 
                 event_type = event.get("type")
 
-                # Extract tool_use from assistant messages
+                # Extract text and tool_use from assistant messages
                 if event_type == "assistant":
                     message = event.get("message", {})
                     for block in message.get("content", []):
-                        if block.get("type") == "tool_use":
+                        if block.get("type") == "text":
+                            assistant_text_parts.append(block.get("text", ""))
+                        elif block.get("type") == "tool_use":
                             tool_name = block.get("name", "")
                             tool_input = block.get("input", {})
                             tool_call = {
@@ -454,6 +481,13 @@ class ClaudeCodeBackend:
                 stderr = process.stderr.read()
                 FreeCAD.Console.PrintError(f"DrawingAssistant: Claude Code error: {stderr}\n")
                 return f"# Error: {stderr}"
+
+            # Fallback: if result is empty, use accumulated assistant text
+            if not result_text and assistant_text_parts:
+                result_text = "\n".join(assistant_text_parts)
+                FreeCAD.Console.PrintMessage(
+                    "DrawingAssistant: Result was empty, using assistant text fallback\n"
+                )
 
             FreeCAD.Console.PrintMessage(
                 f"DrawingAssistant: Claude Code response received "
