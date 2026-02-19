@@ -1,18 +1,27 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
-"""Segmented control for switching between 3D and Drawing assistant modes."""
+"""Segmented control for switching between assistant modes."""
 
 from PySide6 import QtWidgets, QtCore
 
 
 class ModeSegmentedControl(QtWidgets.QWidget):
-    """Pill-shaped segmented control: [ 3D | Drawing ]."""
+    """Pill-shaped segmented control: [ 3D | Drawing | ... ]."""
 
-    modeChanged = QtCore.Signal(str)  # "3d" or "drawing"
+    modeChanged = QtCore.Signal(str)
 
-    def __init__(self, active_mode: str = "3d", theme_module=None, parent=None):
+    # Default modes when none provided (backwards compatible)
+    _DEFAULT_MODES = [
+        {"label": "3D BETA", "value": "3d"},
+        {"label": "Drawing", "value": "drawing"},
+    ]
+
+    def __init__(self, active_mode: str = "3d", theme_module=None,
+                 modes=None, parent=None):
         super().__init__(parent)
         self._active = active_mode
         self._theme = theme_module
+        self._modes = modes or self._DEFAULT_MODES
+        self._buttons = {}
         self._setup_ui()
 
     def _setup_ui(self):
@@ -30,10 +39,11 @@ class ModeSegmentedControl(QtWidgets.QWidget):
         layout.setContentsMargins(2, 2, 2, 2)
         layout.setSpacing(0)
 
-        self._btn_3d = self._make_button("3D BETA", "3d")
-        self._btn_drawing = self._make_button("Drawing", "drawing")
-        layout.addWidget(self._btn_3d)
-        layout.addWidget(self._btn_drawing)
+        for mode_def in self._modes:
+            btn = self._make_button(mode_def["label"], mode_def["value"])
+            self._buttons[mode_def["value"]] = btn
+            layout.addWidget(btn)
+
         self._update_styles()
 
     def _make_button(self, text, mode):
@@ -77,12 +87,8 @@ class ModeSegmentedControl(QtWidgets.QWidget):
                 background-color: {T.COLORS['bg_hover']};
             }}
         """
-        self._btn_3d.setStyleSheet(
-            active_style if self._active == "3d" else inactive_style
-        )
-        self._btn_drawing.setStyleSheet(
-            active_style if self._active == "drawing" else inactive_style
-        )
+        for value, btn in self._buttons.items():
+            btn.setStyleSheet(active_style if value == self._active else inactive_style)
 
     def refresh_theme(self):
         """Re-apply styles after a theme change."""

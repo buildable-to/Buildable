@@ -236,7 +236,12 @@ class DrawingAssistantDockWidget(QtWidgets.QDockWidget):
 
         from AIAssistant.widgets.mode_switcher import ModeSegmentedControl
         self._mode_switcher = ModeSegmentedControl(
-            active_mode="drawing", theme_module=Theme
+            active_mode="drawing", theme_module=Theme,
+            modes=[
+                {"label": "Drawing", "value": "drawing"},
+                {"label": "Context", "value": "context"},
+                {"label": "3D BETA", "value": "3d"},
+            ],
         )
         self._mode_switcher.modeChanged.connect(self._on_mode_changed)
         title_area_layout.addWidget(self._mode_switcher)
@@ -305,13 +310,18 @@ class DrawingAssistantDockWidget(QtWidgets.QDockWidget):
 
         layout.addWidget(header)
 
-        # Project context panel (above chat)
-        self._project_context = ProjectContextWidget()
-        layout.addWidget(self._project_context)
+        # Stacked widget: swap between chat and context views
+        self._stack = QtWidgets.QStackedWidget()
+        self._stack.setStyleSheet("background: transparent;")
 
-        # Chat widget
         self._chat = ChatWidget()
-        layout.addWidget(self._chat, stretch=1)
+        self._stack.addWidget(self._chat)  # index 0 = drawing (chat)
+
+        self._project_context = ProjectContextWidget()
+        self._stack.addWidget(self._project_context)  # index 1 = context
+
+        self._stack.setCurrentIndex(0)
+        layout.addWidget(self._stack, stretch=1)
 
         self.setWidget(main)
         self.setMinimumWidth(380)
@@ -1596,7 +1606,14 @@ Now implement this plan by editing the page files in pages/. Follow the same rul
 
     def _on_mode_changed(self, mode: str):
         """Handle segmented control mode change."""
-        if mode == "3d":
+        if mode == "drawing":
+            self._stack.setCurrentIndex(0)
+        elif mode == "context":
+            self._stack.setCurrentIndex(1)
+        elif mode == "3d":
+            # Switch back to drawing view before leaving
+            self._stack.setCurrentIndex(0)
+            self._mode_switcher.set_active("drawing")
             try:
                 grp = FreeCAD.ParamGet("User parameter:BaseApp/Preferences/AIAssistant")
                 grp.SetString("LastMode", mode)
