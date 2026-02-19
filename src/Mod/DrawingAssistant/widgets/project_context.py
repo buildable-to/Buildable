@@ -309,9 +309,13 @@ class ProjectContextWidget(QtWidgets.QWidget):
 
     def _add_document(self):
         if not self._project_dir:
+            QtWidgets.QMessageBox.information(
+                self.window(), "Save Document First",
+                "Please save your FreeCAD document before adding reference files."
+            )
             return
         paths, _ = QtWidgets.QFileDialog.getOpenFileNames(
-            self, "Add Reference Documents", "",
+            self.window(), "Add Reference Documents", "",
             "Documents (*.pdf *.png *.jpg *.jpeg *.svg *.dxf *.dwg);;All Files (*)",
         )
         if not paths:

@@ -1638,6 +1638,8 @@ Now implement this plan by editing the page files in pages/. Follow the same rul
 
     def _on_context_toggled(self, checked: bool):
         """Toggle between chat and project context views."""
+        if checked:
+            self._update_project_dir()
         self._stack.setCurrentIndex(1 if checked else 0)
 
     def _on_clear(self):
