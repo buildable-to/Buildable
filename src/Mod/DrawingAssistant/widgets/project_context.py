@@ -11,11 +11,73 @@ from PySide6 import QtCore, QtWidgets
 from .. import Theme
 
 
+class _FileChip(QtWidgets.QFrame):
+    """Compact chip showing a reference document with remove button."""
+
+    removeClicked = QtCore.Signal(Path)
+
+    def __init__(self, file_path, parent=None):
+        super().__init__(parent)
+        self._path = file_path
+        self.setObjectName("FileChip")
+        self.setStyleSheet(f"""
+            #FileChip {{
+                background-color: {Theme.COLORS['bg_tertiary']};
+                border: 1px solid {Theme.COLORS['border_subtle']};
+                border-radius: {Theme.RADIUS['sm']};
+            }}
+            #FileChip:hover {{
+                border-color: {Theme.COLORS['border_default']};
+            }}
+        """)
+
+        lay = QtWidgets.QHBoxLayout(self)
+        lay.setContentsMargins(8, 3, 4, 3)
+        lay.setSpacing(4)
+
+        size_kb = file_path.stat().st_size / 1024
+        size_str = f"{size_kb / 1024:.1f} MB" if size_kb > 1024 else f"{size_kb:.0f} KB"
+
+        name = QtWidgets.QLabel(file_path.name)
+        name.setStyleSheet(f"""
+            color: {Theme.COLORS['text_primary']};
+            font-size: {Theme.FONTS['size_xs']};
+            background: transparent;
+        """)
+        lay.addWidget(name)
+
+        size = QtWidgets.QLabel(size_str)
+        size.setStyleSheet(f"""
+            color: {Theme.COLORS['text_muted']};
+            font-size: 10px;
+            background: transparent;
+        """)
+        lay.addWidget(size)
+
+        x_btn = QtWidgets.QPushButton("\u00d7")
+        x_btn.setFixedSize(16, 16)
+        x_btn.setCursor(QtCore.Qt.PointingHandCursor)
+        x_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: transparent;
+                color: {Theme.COLORS['text_muted']};
+                border: none;
+                font-size: 12px;
+                padding: 0;
+            }}
+            QPushButton:hover {{
+                color: {Theme.COLORS['accent_error']};
+            }}
+        """)
+        x_btn.clicked.connect(lambda: self.removeClicked.emit(self._path))
+        lay.addWidget(x_btn)
+
+
 class ProjectContextWidget(QtWidgets.QFrame):
     """Collapsible panel showing project notes (text) and reference documents (files).
 
     Sits between the header and chat area. Collapsed by default, showing a
-    one-line summary. Expanded shows a text editor and file list.
+    one-line summary. Expanded shows a compact text editor and file chips.
 
     Signals:
         contextChanged: Emitted when notes or file list changes.
@@ -37,96 +99,78 @@ class ProjectContextWidget(QtWidgets.QFrame):
 
     def _setup_ui(self):
         self.setObjectName("ProjectContextWidget")
-        self.setStyleSheet(f"""
-            #ProjectContextWidget {{
-                background-color: transparent;
-                border: none;
-            }}
+        self.setStyleSheet("""
+            #ProjectContextWidget { background: transparent; border: none; }
         """)
 
         root = QtWidgets.QVBoxLayout(self)
-        root.setContentsMargins(10, 4, 10, 4)
+        root.setContentsMargins(12, 0, 12, 0)
         root.setSpacing(0)
 
-        # ── Header row (always visible) ──
-        header = QtWidgets.QWidget()
-        header.setStyleSheet("background: transparent;")
-        header.setCursor(QtCore.Qt.PointingHandCursor)
-        header_layout = QtWidgets.QHBoxLayout(header)
-        header_layout.setContentsMargins(4, 2, 4, 2)
-        header_layout.setSpacing(6)
+        # ── Header bar (always visible) ──────────────────────────────
+        self._header = QtWidgets.QFrame()
+        self._header.setObjectName("PCHeader")
+        self._header.setCursor(QtCore.Qt.PointingHandCursor)
+        self._header.setStyleSheet(f"""
+            #PCHeader {{
+                background: transparent;
+                border-bottom: 1px solid {Theme.COLORS['border_subtle']};
+            }}
+        """)
+        h_lay = QtWidgets.QHBoxLayout(self._header)
+        h_lay.setContentsMargins(2, 6, 2, 6)
+        h_lay.setSpacing(6)
 
-        self._arrow = QtWidgets.QLabel("\u25b6")  # ▶
+        self._arrow = QtWidgets.QLabel("\u25b8")  # ▸
         self._arrow.setStyleSheet(f"""
             color: {Theme.COLORS['text_muted']};
-            font-size: {Theme.FONTS['size_xs']};
+            font-size: 10px;
             background: transparent;
         """)
-        header_layout.addWidget(self._arrow)
+        h_lay.addWidget(self._arrow)
 
         title = QtWidgets.QLabel("Project Context")
         title.setStyleSheet(f"""
             color: {Theme.COLORS['text_muted']};
             font-size: {Theme.FONTS['size_xs']};
-            font-weight: {Theme.FONTS['weight_medium']};
             background: transparent;
         """)
-        header_layout.addWidget(title)
+        h_lay.addWidget(title)
 
         self._badge = QtWidgets.QLabel("")
         self._badge.setStyleSheet(f"""
             color: {Theme.COLORS['text_muted']};
-            font-size: {Theme.FONTS['size_xs']};
+            font-size: 10px;
             background: transparent;
         """)
-        header_layout.addWidget(self._badge)
+        h_lay.addWidget(self._badge)
 
-        header_layout.addStretch()
+        h_lay.addStretch()
 
-        # Make header clickable
-        header.mousePressEvent = lambda _: self._toggle_collapsed()
-        root.addWidget(header)
+        self._header.mousePressEvent = lambda _: self._toggle_collapsed()
+        root.addWidget(self._header)
 
-        # ── Content area (hidden when collapsed) ──
-        self._content = QtWidgets.QFrame()
-        self._content.setObjectName("ProjectContextContent")
-        self._content.setStyleSheet(f"""
-            #ProjectContextContent {{
-                background-color: {Theme.COLORS['bg_secondary']};
-                border: 1px solid {Theme.COLORS['border_subtle']};
-                border-radius: {Theme.RADIUS['md']};
-            }}
-        """)
-        content_layout = QtWidgets.QVBoxLayout(self._content)
-        content_layout.setContentsMargins(12, 10, 12, 10)
-        content_layout.setSpacing(8)
+        # ── Content area (hidden when collapsed) ─────────────────────
+        self._content = QtWidgets.QWidget()
+        self._content.setStyleSheet("background: transparent;")
+        c_lay = QtWidgets.QVBoxLayout(self._content)
+        c_lay.setContentsMargins(0, 8, 0, 8)
+        c_lay.setSpacing(6)
 
-        # Notes label
-        notes_label = QtWidgets.QLabel("Project notes")
-        notes_label.setStyleSheet(f"""
-            color: {Theme.COLORS['text_secondary']};
-            font-size: {Theme.FONTS['size_xs']};
-            font-weight: {Theme.FONTS['weight_medium']};
-            background: transparent;
-        """)
-        content_layout.addWidget(notes_label)
-
-        # Text area for notes
+        # Text area — compact, placeholder is the label
         self._notes_edit = QtWidgets.QPlainTextEdit()
         self._notes_edit.setPlaceholderText(
-            "Add project notes here \u2014 materials, naming conventions, "
-            "drawing preferences, title block info..."
+            "Materials, naming conventions, drawing preferences, title block\u2026"
         )
-        self._notes_edit.setMinimumHeight(80)
-        self._notes_edit.setMaximumHeight(120)
+        self._notes_edit.setFixedHeight(64)
         self._notes_edit.setStyleSheet(f"""
             QPlainTextEdit {{
-                background-color: {Theme.COLORS['bg_primary']};
+                background-color: {Theme.COLORS['bg_secondary']};
                 color: {Theme.COLORS['text_primary']};
                 border: 1px solid {Theme.COLORS['border_subtle']};
                 border-radius: {Theme.RADIUS['sm']};
-                padding: 8px;
-                font-size: {Theme.FONTS['size_sm']};
+                padding: 6px 8px;
+                font-size: {Theme.FONTS['size_xs']};
                 font-family: {Theme.FONTS['family_sans']};
             }}
             QPlainTextEdit:focus {{
@@ -134,53 +178,34 @@ class ProjectContextWidget(QtWidgets.QFrame):
             }}
         """)
         self._notes_edit.textChanged.connect(self._on_notes_changed)
-        content_layout.addWidget(self._notes_edit)
+        c_lay.addWidget(self._notes_edit)
 
-        # Reference documents label
-        docs_label = QtWidgets.QLabel("Reference documents")
-        docs_label.setStyleSheet(f"""
-            color: {Theme.COLORS['text_secondary']};
-            font-size: {Theme.FONTS['size_xs']};
-            font-weight: {Theme.FONTS['weight_medium']};
-            background: transparent;
-        """)
-        content_layout.addWidget(docs_label)
+        # Documents: flow layout with chips + add button inline
+        self._docs_row = QtWidgets.QWidget()
+        self._docs_row.setStyleSheet("background: transparent;")
+        self._docs_flow = _FlowLayout(self._docs_row, h_spacing=6, v_spacing=4)
+        self._docs_flow.setContentsMargins(0, 0, 0, 0)
+        c_lay.addWidget(self._docs_row)
 
-        # File list container
-        self._file_list = QtWidgets.QVBoxLayout()
-        self._file_list.setSpacing(4)
-        content_layout.addLayout(self._file_list)
-
-        # "No documents" placeholder
-        self._no_docs_label = QtWidgets.QLabel("No reference documents added")
-        self._no_docs_label.setStyleSheet(f"""
-            color: {Theme.COLORS['text_muted']};
-            font-size: {Theme.FONTS['size_xs']};
-            background: transparent;
-            padding: 4px 0;
-        """)
-        self._file_list.addWidget(self._no_docs_label)
-
-        # Add document button
-        add_btn = QtWidgets.QPushButton("+ Add document")
-        add_btn.setCursor(QtCore.Qt.PointingHandCursor)
-        add_btn.setStyleSheet(f"""
+        # "Add docs" — small inline button, always last in flow
+        self._add_btn = QtWidgets.QPushButton("+ Add docs")
+        self._add_btn.setCursor(QtCore.Qt.PointingHandCursor)
+        self._add_btn.setStyleSheet(f"""
             QPushButton {{
-                background-color: transparent;
-                color: {Theme.COLORS['accent_primary']};
+                background: transparent;
+                color: {Theme.COLORS['text_muted']};
                 border: 1px dashed {Theme.COLORS['border_default']};
                 border-radius: {Theme.RADIUS['sm']};
-                padding: 6px 12px;
-                font-size: {Theme.FONTS['size_xs']};
-                font-weight: {Theme.FONTS['weight_medium']};
+                padding: 3px 10px;
+                font-size: 10px;
             }}
             QPushButton:hover {{
-                background-color: {Theme.COLORS['bg_hover']};
+                color: {Theme.COLORS['accent_primary']};
                 border-color: {Theme.COLORS['accent_primary']};
             }}
         """)
-        add_btn.clicked.connect(self._add_document)
-        content_layout.addWidget(add_btn)
+        self._add_btn.clicked.connect(self._add_document)
+        self._docs_flow.addWidget(self._add_btn)
 
         self._content.hide()
         root.addWidget(self._content)
@@ -193,41 +218,36 @@ class ProjectContextWidget(QtWidgets.QFrame):
         """Load project notes and reference docs from project directory."""
         self._project_dir = project_dir
         if not project_dir:
+            self._notes_edit.blockSignals(True)
             self._notes_edit.setPlainText("")
-            self._clear_file_list()
+            self._notes_edit.blockSignals(False)
+            self._refresh_file_list()
             self._update_badge()
             return
 
         project_dir = Path(project_dir)
+        (project_dir / "reference_docs").mkdir(parents=True, exist_ok=True)
 
-        # Ensure reference_docs/ exists
-        ref_dir = project_dir / "reference_docs"
-        ref_dir.mkdir(parents=True, exist_ok=True)
-
-        # Load project.md
         project_md = project_dir / "project.md"
+        self._notes_edit.blockSignals(True)
         if project_md.exists():
             try:
-                text = project_md.read_text(encoding="utf-8")
-                self._notes_edit.blockSignals(True)
-                self._notes_edit.setPlainText(text)
-                self._notes_edit.blockSignals(False)
+                self._notes_edit.setPlainText(
+                    project_md.read_text(encoding="utf-8")
+                )
             except Exception:
-                pass
+                self._notes_edit.setPlainText("")
         else:
-            self._notes_edit.blockSignals(True)
             self._notes_edit.setPlainText("")
-            self._notes_edit.blockSignals(False)
+        self._notes_edit.blockSignals(False)
 
         self._refresh_file_list()
         self._update_badge()
 
     def get_notes_text(self):
-        """Get current project notes text."""
         return self._notes_edit.toPlainText()
 
     def get_reference_docs(self):
-        """Get list of reference document paths."""
         if not self._project_dir:
             return []
         ref_dir = Path(self._project_dir) / "reference_docs"
@@ -243,23 +263,19 @@ class ProjectContextWidget(QtWidgets.QFrame):
     def _toggle_collapsed(self):
         self._collapsed = not self._collapsed
         self._content.setVisible(not self._collapsed)
-        self._arrow.setText("\u25bc" if not self._collapsed else "\u25b6")  # ▼ / ▶
-        self._update_badge()
+        self._arrow.setText("\u25be" if not self._collapsed else "\u25b8")  # ▾ / ▸
 
     # ── Notes Management ──────────────────────────────────────────────
 
     def _on_notes_changed(self):
-        """Debounced save on text change."""
         self._save_timer.start()
         self._update_badge()
 
     def _save_notes(self):
-        """Write notes text to project.md."""
         if not self._project_dir:
             return
-        project_md = Path(self._project_dir) / "project.md"
         try:
-            project_md.write_text(
+            (Path(self._project_dir) / "project.md").write_text(
                 self._notes_edit.toPlainText(), encoding="utf-8"
             )
             self.contextChanged.emit()
@@ -268,120 +284,50 @@ class ProjectContextWidget(QtWidgets.QFrame):
 
     # ── File List Management ──────────────────────────────────────────
 
-    def _clear_file_list(self):
-        """Remove all file row widgets from the file list."""
-        while self._file_list.count() > 0:
-            item = self._file_list.takeAt(0)
-            w = item.widget()
-            if w:
-                w.deleteLater()
-        # Re-add placeholder
-        self._no_docs_label = QtWidgets.QLabel("No reference documents added")
-        self._no_docs_label.setStyleSheet(f"""
-            color: {Theme.COLORS['text_muted']};
-            font-size: {Theme.FONTS['size_xs']};
-            background: transparent;
-            padding: 4px 0;
-        """)
-        self._file_list.addWidget(self._no_docs_label)
-
     def _refresh_file_list(self):
-        """Rescan reference_docs/ and rebuild file list UI."""
-        self._clear_file_list()
-        docs = self.get_reference_docs()
+        # Remove all except the add button
+        while self._docs_flow.count() > 0:
+            item = self._docs_flow.takeAt(0)
+            w = item.widget()
+            if w and w is not self._add_btn:
+                w.deleteLater()
 
-        if docs:
-            self._no_docs_label.hide()
-        else:
-            self._no_docs_label.show()
+        for doc_path in self.get_reference_docs():
+            chip = _FileChip(doc_path)
+            chip.removeClicked.connect(self._remove_document)
+            self._docs_flow.insertWidget(self._docs_flow.count(), chip)
 
-        for doc_path in docs:
-            row = self._make_file_row(doc_path)
-            self._file_list.addWidget(row)
-
+        # Add button always last
+        self._docs_flow.addWidget(self._add_btn)
         self._update_badge()
 
-    def _make_file_row(self, file_path):
-        """Create a row widget for a reference document."""
-        row = QtWidgets.QWidget()
-        row.setStyleSheet("background: transparent;")
-        row_layout = QtWidgets.QHBoxLayout(row)
-        row_layout.setContentsMargins(0, 2, 0, 2)
-        row_layout.setSpacing(8)
-
-        # File name + size
-        size_kb = file_path.stat().st_size / 1024
-        if size_kb > 1024:
-            size_str = f"{size_kb / 1024:.1f} MB"
-        else:
-            size_str = f"{size_kb:.0f} KB"
-
-        label = QtWidgets.QLabel(f"{file_path.name}  ({size_str})")
-        label.setStyleSheet(f"""
-            color: {Theme.COLORS['text_primary']};
-            font-size: {Theme.FONTS['size_xs']};
-            background: transparent;
-        """)
-        row_layout.addWidget(label, stretch=1)
-
-        # Remove button
-        remove_btn = QtWidgets.QPushButton("\u00d7")  # ×
-        remove_btn.setFixedSize(20, 20)
-        remove_btn.setCursor(QtCore.Qt.PointingHandCursor)
-        remove_btn.setToolTip("Remove document")
-        remove_btn.setStyleSheet(f"""
-            QPushButton {{
-                background: transparent;
-                color: {Theme.COLORS['text_muted']};
-                border: none;
-                font-size: {Theme.FONTS['size_sm']};
-                border-radius: {Theme.RADIUS['xs']};
-            }}
-            QPushButton:hover {{
-                color: {Theme.COLORS['error']};
-                background-color: {Theme.COLORS['bg_hover']};
-            }}
-        """)
-        remove_btn.clicked.connect(lambda checked=False, p=file_path: self._remove_document(p))
-        row_layout.addWidget(remove_btn)
-
-        return row
-
     def _add_document(self):
-        """Open file dialog and copy selected file to reference_docs/."""
         if not self._project_dir:
             return
-
-        file_paths, _ = QtWidgets.QFileDialog.getOpenFileNames(
-            self,
-            "Add Reference Documents",
-            "",
+        paths, _ = QtWidgets.QFileDialog.getOpenFileNames(
+            self, "Add Reference Documents", "",
             "Documents (*.pdf *.png *.jpg *.jpeg *.svg *.dxf *.dwg);;All Files (*)",
         )
-        if not file_paths:
+        if not paths:
             return
 
         ref_dir = Path(self._project_dir) / "reference_docs"
         ref_dir.mkdir(parents=True, exist_ok=True)
-
-        for src in file_paths:
+        for src in paths:
             src_path = Path(src)
             dest = ref_dir / src_path.name
-            # Avoid overwriting — append number if exists
             if dest.exists():
-                stem = src_path.stem
-                suffix = src_path.suffix
-                counter = 1
+                stem, suffix = src_path.stem, src_path.suffix
+                c = 1
                 while dest.exists():
-                    dest = ref_dir / f"{stem}_{counter}{suffix}"
-                    counter += 1
+                    dest = ref_dir / f"{stem}_{c}{suffix}"
+                    c += 1
             shutil.copy2(str(src_path), str(dest))
 
         self._refresh_file_list()
         self.contextChanged.emit()
 
     def _remove_document(self, file_path):
-        """Delete a reference document."""
         try:
             file_path.unlink()
         except Exception:
@@ -392,17 +338,81 @@ class ProjectContextWidget(QtWidgets.QFrame):
     # ── Badge ─────────────────────────────────────────────────────────
 
     def _update_badge(self):
-        """Update the collapsed-state summary badge."""
         parts = []
         notes = self._notes_edit.toPlainText().strip()
         if notes:
-            line_count = len([l for l in notes.splitlines() if l.strip()])
-            parts.append(f"{line_count} line{'s' if line_count != 1 else ''}")
+            n = len([ln for ln in notes.splitlines() if ln.strip()])
+            parts.append(f"{n} note{'s' if n != 1 else ''}")
         docs = self.get_reference_docs()
         if docs:
             parts.append(f"{len(docs)} doc{'s' if len(docs) != 1 else ''}")
+        self._badge.setText(f"\u00b7 {', '.join(parts)}" if parts else "")
 
-        if parts:
-            self._badge.setText(f"({', '.join(parts)})")
-        else:
-            self._badge.setText("")
+
+# ─── Flow Layout ─────────────────────────────────────────────────────
+# Wraps widgets like text — items that overflow the row flow to the next line.
+
+class _FlowLayout(QtWidgets.QLayout):
+
+    def __init__(self, parent=None, h_spacing=6, v_spacing=4):
+        super().__init__(parent)
+        self._h = h_spacing
+        self._v = v_spacing
+        self._items = []
+
+    def addItem(self, item):
+        self._items.append(item)
+
+    def insertWidget(self, index, widget):
+        self.addChildWidget(widget)
+        self._items.insert(index, QtWidgets.QWidgetItem(widget))
+        self.invalidate()
+
+    def count(self):
+        return len(self._items)
+
+    def itemAt(self, index):
+        return self._items[index] if 0 <= index < len(self._items) else None
+
+    def takeAt(self, index):
+        return self._items.pop(index) if 0 <= index < len(self._items) else None
+
+    def hasHeightForWidth(self):
+        return True
+
+    def heightForWidth(self, width):
+        return self._lay(QtCore.QRect(0, 0, width, 0), True)
+
+    def setGeometry(self, rect):
+        super().setGeometry(rect)
+        self._lay(rect)
+
+    def sizeHint(self):
+        return self.minimumSize()
+
+    def minimumSize(self):
+        s = QtCore.QSize()
+        for it in self._items:
+            s = s.expandedTo(it.minimumSize())
+        m = self.contentsMargins()
+        return s + QtCore.QSize(m.left() + m.right(), m.top() + m.bottom())
+
+    def _lay(self, rect, test=False):
+        m = self.contentsMargins()
+        r = rect.adjusted(m.left(), m.top(), -m.right(), -m.bottom())
+        x, y, lh = r.x(), r.y(), 0
+        for it in self._items:
+            w = it.widget()
+            if w and not w.isVisible():
+                continue
+            sz = it.sizeHint()
+            nx = x + sz.width() + self._h
+            if nx - self._h > r.right() and lh > 0:
+                x, y = r.x(), y + lh + self._v
+                nx = x + sz.width() + self._h
+                lh = 0
+            if not test:
+                it.setGeometry(QtCore.QRect(QtCore.QPoint(x, y), sz))
+            x = nx
+            lh = max(lh, sz.height())
+        return y + lh - rect.y() + m.bottom()
