@@ -176,6 +176,7 @@ class DrawingAssistantDockWidget(QtWidgets.QDockWidget):
         self._pending_plan = None
         self._plan_user_request = None
         self._plan_mode_request = False
+        self._plan_pending_refinement = None  # Set when user clicks "Keep Planning"
 
         # Session manager for persisting conversations
         self.session_manager = SessionManager()
@@ -455,6 +456,7 @@ class DrawingAssistantDockWidget(QtWidgets.QDockWidget):
         self._chat.planApproved.connect(self._on_plan_approved)
         self._chat.planEdited.connect(self._on_plan_edited)
         self._chat.planCancelled.connect(self._on_plan_cancelled)
+        self._chat.planKeepPlanning.connect(self._on_plan_keep_planning)
 
         # Connect to session manager for auto-save
         self._chat._chat_list._model.message_added.connect(
@@ -718,11 +720,34 @@ class DrawingAssistantDockWidget(QtWidgets.QDockWidget):
         if user_image_paths:
             all_screenshots.extend(user_image_paths)
 
-        # Check if plan mode is enabled
-        self._plan_mode_request = self._chat.is_plan_mode()
+        # Plan refinement: user typed a follow-up after "Keep Planning"
+        if self._plan_pending_refinement:
+            current_plan = self._plan_pending_refinement
+            self._plan_pending_refinement = None
+            self._plan_mode_request = True  # treat response as plan
 
-        if self._plan_mode_request:
-            # Phase 1: Plan only (read-only via --permission-mode plan)
+            refinement_prompt = f"""The user wants to modify the current execution plan.
+
+Current plan:
+{current_plan}
+
+User feedback: {user_input}
+
+Revise the plan based on this feedback. Output the complete revised numbered plan.
+
+Format:
+## Plan
+1. **Action**: Specific description with numbers
+2. **Action**: Description
+..."""
+
+            self.worker = LLMWorker(
+                self.llm, refinement_prompt, context, conversation,
+                all_screenshots, read_only=True
+            )
+        # Check if plan mode is enabled (new plan)
+        elif self._chat.is_plan_mode():
+            self._plan_mode_request = True
             self._plan_user_request = user_input
             plan_prompt = f"""Create a detailed execution plan for this drawing request.
 
@@ -1462,6 +1487,7 @@ Read the relevant page file to understand what went wrong, then fix it."""
 
     def _on_plan_approved(self, plan_text: str):
         """Handle plan approval - request code generation (Phase 2)."""
+        self._plan_pending_refinement = None
         FreeCAD.Console.PrintMessage(
             "DrawingAssistant: Plan approved - requesting code generation\n"
         )
@@ -1484,7 +1510,13 @@ Read the relevant page file to understand what went wrong, then fix it."""
         ActivityLogger.log_plan_cancelled()
         self._pending_plan = None
         self._plan_user_request = None
+        self._plan_pending_refinement = None
         self._chat.add_system_message("Plan cancelled")
+
+    def _on_plan_keep_planning(self, plan_text: str):
+        """Handle keep planning — store plan for refinement on next user message."""
+        FreeCAD.Console.PrintMessage("DrawingAssistant: Keep planning - awaiting refinement\n")
+        self._plan_pending_refinement = plan_text
 
     def _generate_code_from_plan(self, plan_text: str):
         """Request code generation based on approved plan (Phase 2).
