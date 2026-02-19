@@ -454,7 +454,6 @@ class DrawingAssistantDockWidget(QtWidgets.QDockWidget):
 
         # Plan mode signals
         self._chat.planApproved.connect(self._on_plan_approved)
-        self._chat.planEdited.connect(self._on_plan_edited)
         self._chat.planCancelled.connect(self._on_plan_cancelled)
         self._chat.planKeepPlanning.connect(self._on_plan_keep_planning)
 
@@ -866,6 +865,7 @@ Format:
             self._plan_mode_request = False
             FreeCAD.Console.PrintMessage("DrawingAssistant: Plan mode - showing plan for approval\n")
             self._chat.add_plan_message(response, self._plan_user_request or "")
+            self._plan_pending_refinement = response
             self.pending_input = None
             return
 
@@ -1494,15 +1494,6 @@ Read the relevant page file to understand what went wrong, then fix it."""
         ActivityLogger.log_plan_approved(plan_text)
         self._pending_plan = plan_text
         self._generate_code_from_plan(plan_text)
-
-    def _on_plan_edited(self, edited_plan: str):
-        """Handle plan edit and approval."""
-        FreeCAD.Console.PrintMessage(
-            "DrawingAssistant: Plan edited and approved - requesting code generation\n"
-        )
-        ActivityLogger.log_plan_edited(edited=edited_plan)
-        self._pending_plan = edited_plan
-        self._generate_code_from_plan(edited_plan)
 
     def _on_plan_cancelled(self):
         """Handle plan cancellation."""
