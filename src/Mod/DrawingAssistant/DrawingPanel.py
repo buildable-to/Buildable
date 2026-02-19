@@ -236,12 +236,7 @@ class DrawingAssistantDockWidget(QtWidgets.QDockWidget):
 
         from AIAssistant.widgets.mode_switcher import ModeSegmentedControl
         self._mode_switcher = ModeSegmentedControl(
-            active_mode="drawing", theme_module=Theme,
-            modes=[
-                {"label": "Drawing", "value": "drawing"},
-                {"label": "Context", "value": "context"},
-                {"label": "3D BETA", "value": "3d"},
-            ],
+            active_mode="drawing", theme_module=Theme
         )
         self._mode_switcher.modeChanged.connect(self._on_mode_changed)
         title_area_layout.addWidget(self._mode_switcher)
@@ -279,6 +274,32 @@ class DrawingAssistantDockWidget(QtWidgets.QDockWidget):
                 image: none;
             }}
         """
+
+        # Context toggle button
+        self._context_btn = QtWidgets.QToolButton()
+        self._context_btn.setText("Context")
+        self._context_btn.setToolTip("Project notes and reference documents")
+        self._context_btn.setCheckable(True)
+        self._context_btn.setStyleSheet(f"""
+            QToolButton {{
+                color: {Theme.COLORS['text_secondary']};
+                background: transparent;
+                border: none;
+                font-size: {Theme.FONTS['size_sm']};
+                padding: 6px 10px;
+                border-radius: {Theme.RADIUS['xs']};
+            }}
+            QToolButton:hover {{
+                color: {Theme.COLORS['text_primary']};
+                background-color: {Theme.COLORS['bg_hover']};
+            }}
+            QToolButton:checked {{
+                color: {Theme.COLORS['accent_primary']};
+                background-color: {Theme.COLORS['bg_tertiary']};
+            }}
+        """)
+        self._context_btn.toggled.connect(self._on_context_toggled)
+        header_layout.addWidget(self._context_btn)
 
         # Sessions button
         self.sessions_btn = QtWidgets.QToolButton()
@@ -1606,14 +1627,7 @@ Now implement this plan by editing the page files in pages/. Follow the same rul
 
     def _on_mode_changed(self, mode: str):
         """Handle segmented control mode change."""
-        if mode == "drawing":
-            self._stack.setCurrentIndex(0)
-        elif mode == "context":
-            self._stack.setCurrentIndex(1)
-        elif mode == "3d":
-            # Switch back to drawing view before leaving
-            self._stack.setCurrentIndex(0)
-            self._mode_switcher.set_active("drawing")
+        if mode == "3d":
             try:
                 grp = FreeCAD.ParamGet("User parameter:BaseApp/Preferences/AIAssistant")
                 grp.SetString("LastMode", mode)
@@ -1621,6 +1635,10 @@ Now implement this plan by editing the page files in pages/. Follow the same rul
                 pass
             import AIAssistant
             AIAssistant.show()
+
+    def _on_context_toggled(self, checked: bool):
+        """Toggle between chat and project context views."""
+        self._stack.setCurrentIndex(1 if checked else 0)
 
     def _on_clear(self):
         """Clear the chat UI."""
