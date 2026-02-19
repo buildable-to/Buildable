@@ -28,7 +28,7 @@ from .core.review_kit import ReviewKit, generate_review_kit, format_review_promp
 from .persistence import activity as ActivityLogger
 from .persistence.session import SessionManager
 from .widgets.chat import ChatWidget
-from .widgets.context_selection import ContextSelectionWidget
+from .widgets.project_context import ProjectContextWidget
 
 
 # Maximum attempts to auto-fix code that fails preview
@@ -196,6 +196,10 @@ class DrawingAssistantDockWidget(QtWidgets.QDockWidget):
         # Ensure CLAUDE.md exists for Claude Code backend
         self._ensure_claude_md()
 
+        # Load project context (notes + reference docs)
+        if self._project_dir:
+            self._project_context.set_project_dir(self._project_dir)
+
         # Log panel opened
         ActivityLogger.log_panel_opened()
 
@@ -301,9 +305,9 @@ class DrawingAssistantDockWidget(QtWidgets.QDockWidget):
 
         layout.addWidget(header)
 
-        # Context selection widget (above chat)
-        self._context_widget = ContextSelectionWidget()
-        layout.addWidget(self._context_widget)
+        # Project context panel (above chat)
+        self._project_context = ProjectContextWidget()
+        layout.addWidget(self._project_context)
 
         # Chat widget
         self._chat = ChatWidget()
@@ -691,8 +695,7 @@ class DrawingAssistantDockWidget(QtWidgets.QDockWidget):
         # Build context if enabled
         context = ""
         if self.context_action.isChecked():
-            objects_filter = self._context_widget.get_context_objects()
-            context = ContextBuilder.build_context(objects_filter=objects_filter)
+            context = ContextBuilder.build_context(objects_filter=None)
 
         # Append warnings from last execution to context
         if self._last_execution_warnings:
@@ -984,7 +987,7 @@ Format:
             ActivityLogger.log_preview_created(len(session.object_shapes), False)
 
             # Check if self-review is enabled
-            if self._context_widget.show_review_feedback():
+            if self.self_review_action.isChecked():
                 self._run_sandbox_self_review()
             else:
                 self._finalize_sandbox_preview()
@@ -1528,8 +1531,7 @@ Read the relevant page file to understand what went wrong, then fix it."""
 
         context = ""
         if self.context_action.isChecked():
-            objects_filter = self._context_widget.get_context_objects()
-            context = ContextBuilder.build_context(objects_filter=objects_filter)
+            context = ContextBuilder.build_context(objects_filter=None)
 
         if self._last_execution_warnings:
             warnings_text = "\n".join(self._last_execution_warnings)
@@ -1642,6 +1644,7 @@ Now implement this plan by editing the page files in pages/. Follow the same rul
                     f"DrawingAssistant: Project directory updated to {new_dir}\n"
                 )
             self._ensure_claude_md()
+            self._project_context.set_project_dir(new_dir)
 
     def _prompt_save_document(self):
         """Prompt user to save the document before using Drawing Assistant."""
