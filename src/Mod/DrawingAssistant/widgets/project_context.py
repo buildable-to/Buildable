@@ -7,6 +7,7 @@ Shown when the user selects the "Context" tab in the mode switcher.
 import shutil
 from pathlib import Path
 
+import FreeCAD
 from PySide6 import QtCore, QtWidgets
 from .. import Theme
 
@@ -35,8 +36,11 @@ class _FileChip(QtWidgets.QFrame):
         lay.setContentsMargins(10, 5, 6, 5)
         lay.setSpacing(6)
 
-        size_kb = file_path.stat().st_size / 1024
-        size_str = f"{size_kb / 1024:.1f} MB" if size_kb > 1024 else f"{size_kb:.0f} KB"
+        try:
+            size_kb = file_path.stat().st_size / 1024
+            size_str = f"{size_kb / 1024:.1f} MB" if size_kb > 1024 else f"{size_kb:.0f} KB"
+        except OSError:
+            size_str = "? KB"
 
         name = QtWidgets.QLabel(file_path.name)
         name.setStyleSheet(f"""
@@ -203,7 +207,7 @@ class ProjectContextWidget(QtWidgets.QWidget):
 
         # Empty state label (shown when no docs)
         self._empty_label = QtWidgets.QLabel(
-            "Drop PDFs, drawings, or specifications here"
+            "No reference documents yet \u2014 click + Add above"
         )
         self._empty_label.setAlignment(QtCore.Qt.AlignCenter)
         self._empty_label.setStyleSheet(f"""
@@ -237,7 +241,6 @@ class ProjectContextWidget(QtWidgets.QWidget):
             return
 
         project_dir = Path(project_dir)
-        (project_dir / "reference_docs").mkdir(parents=True, exist_ok=True)
 
         project_md = project_dir / "project.md"
         self._notes_edit.blockSignals(True)
@@ -246,7 +249,10 @@ class ProjectContextWidget(QtWidgets.QWidget):
                 self._notes_edit.setPlainText(
                     project_md.read_text(encoding="utf-8")
                 )
-            except Exception:
+            except Exception as e:
+                FreeCAD.Console.PrintWarning(
+                    f"DrawingAssistant: Failed to read project notes: {e}\n"
+                )
                 self._notes_edit.setPlainText("")
         else:
             self._notes_edit.setPlainText("")
@@ -270,6 +276,12 @@ class ProjectContextWidget(QtWidgets.QWidget):
 
     # ── Notes ─────────────────────────────────────────────────────────
 
+    def flush_notes(self):
+        """Stop debounce timer and save notes immediately."""
+        if self._save_timer.isActive():
+            self._save_timer.stop()
+            self._save_notes()
+
     def _on_notes_changed(self):
         self._save_timer.start()
 
@@ -281,17 +293,19 @@ class ProjectContextWidget(QtWidgets.QWidget):
                 self._notes_edit.toPlainText(), encoding="utf-8"
             )
             self.contextChanged.emit()
-        except Exception:
-            pass
+        except Exception as e:
+            FreeCAD.Console.PrintWarning(
+                f"DrawingAssistant: Failed to save project notes: {e}\n"
+            )
 
     # ── File Management ───────────────────────────────────────────────
 
     def _refresh_file_list(self):
-        # Clear existing chips
+        # Clear existing chips (but preserve the persistent _empty_label)
         while self._docs_layout.count() > 0:
             item = self._docs_layout.takeAt(0)
             w = item.widget()
-            if w:
+            if w and w is not self._empty_label:
                 w.deleteLater()
 
         docs = self.get_reference_docs()
@@ -338,10 +352,22 @@ class ProjectContextWidget(QtWidgets.QWidget):
         self.contextChanged.emit()
 
     def _remove_document(self, file_path):
+        reply = QtWidgets.QMessageBox.question(
+            self.window(),
+            "Remove Reference Document",
+            f'Remove "{file_path.name}" from reference documents?\n\n'
+            "This will delete the file from the project.",
+            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
+            QtWidgets.QMessageBox.No,
+        )
+        if reply != QtWidgets.QMessageBox.Yes:
+            return
         try:
             file_path.unlink()
-        except Exception:
-            pass
+        except Exception as e:
+            FreeCAD.Console.PrintWarning(
+                f"DrawingAssistant: Failed to remove document {file_path.name}: {e}\n"
+            )
         self._refresh_file_list()
         self.contextChanged.emit()
 

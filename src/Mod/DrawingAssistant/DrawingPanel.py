@@ -1640,6 +1640,9 @@ Now implement this plan by editing the page files in pages/. Follow the same rul
         """Toggle between chat and project context views."""
         if checked:
             self._update_project_dir()
+        else:
+            # Flush any pending note changes before leaving context view
+            self._project_context.flush_notes()
         self._stack.setCurrentIndex(1 if checked else 0)
 
     def _on_clear(self):

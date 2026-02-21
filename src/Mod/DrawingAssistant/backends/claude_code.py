@@ -335,8 +335,10 @@ class ClaudeCodeBackend:
                         system_prompt += (
                             f"\n\n## Project Notes (from engineer)\n{notes}"
                         )
-                except Exception:
-                    pass
+                except Exception as e:
+                    FreeCAD.Console.PrintWarning(
+                        f"DrawingAssistant: Failed to read project.md: {e}\n"
+                    )
 
             # Append reference documents listing
             ref_dir = Path(self.project_dir) / "reference_docs"
