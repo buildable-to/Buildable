@@ -24,7 +24,7 @@ from .core import snapshot as SnapshotManager
 from .core import changes as ChangeDetector
 from .core import source as SourceManager
 from .core.preview import PreviewManager, SandboxReviewSession
-from .core.review_kit import ReviewKit, generate_review_kit, format_review_prompt
+from .core.review_kit import ReviewKit, generate_review_kit, format_review_prompt, list_available_screenshots
 from .persistence import activity as ActivityLogger
 from .persistence.session import SessionManager
 from .widgets.chat import ChatWidget
@@ -1759,16 +1759,28 @@ Now implement this plan by editing the page files in pages/. Follow the same rul
     # =========================================================================
 
     def _get_top_view_screenshots(self) -> list:
-        """Return the top view screenshot path as a list (for LLMWorker compat)."""
-        if self._last_review_kit and self._last_review_kit.top_view_path:
-            return [self._last_review_kit.top_view_path]
-        return []
+        """Return persisted group screenshot paths (for LLMWorker compat).
+
+        Scans screenshots/ subdirectories for all group PNGs so the
+        inner Claude can see the current drawing state on each turn.
+        """
+        if not self._project_dir:
+            return []
+        available = list_available_screenshots(self._project_dir)
+        paths = []
+        for sheet_groups in available.values():
+            paths.extend(sheet_groups.values())
+        return paths
 
     def _generate_and_maybe_review(self, change_set):
         """Generate review kit and optionally run on-demand self-review."""
         if self._project_dir:
+            page_map = CodeExecutor.get_page_object_map()
+            edited = getattr(self.llm, "edited_files", [])
             self._last_review_kit = generate_review_kit(
-                change_set, self._project_dir
+                change_set, self._project_dir,
+                page_object_map=page_map,
+                changed_files=edited if edited else None,
             )
         else:
             self._last_review_kit = None
@@ -1848,8 +1860,12 @@ Now implement this plan by editing the page files in pages/. Follow the same rul
 
                 # Regenerate review kit for next iteration
                 if self._project_dir:
+                    page_map = CodeExecutor.get_page_object_map()
+                    edited = getattr(self.llm, "edited_files", [])
                     self._last_review_kit = generate_review_kit(
-                        change_set, self._project_dir
+                        change_set, self._project_dir,
+                        page_object_map=page_map,
+                        changed_files=edited if edited else None,
                     )
 
                 self._run_on_demand_review(change_set)
@@ -1925,7 +1941,11 @@ Now implement this plan by editing the page files in pages/. Follow the same rul
             if main_doc_name and FreeCAD.getDocument(main_doc_name):
                 FreeCAD.setActiveDocument(main_doc_name)
 
-            kit = generate_review_kit(sandbox_change_set, self._project_dir)
+            # Sandbox: capture ALL groups (no page_object_map for sandbox doc)
+            kit = generate_review_kit(
+                sandbox_change_set, self._project_dir,
+                page_object_map=None, changed_files=None,
+            )
             review_prompt = format_review_prompt(kit)
         else:
             review_prompt = "Review the current drawing state. Respond with LOOKS_GOOD if correct or explain issues."

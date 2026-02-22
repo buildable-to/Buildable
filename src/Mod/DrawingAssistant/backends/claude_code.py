@@ -622,13 +622,13 @@ class ClaudeCodeBackend:
                 parts.append("")
 
             if auto_images:
-                parts.append("### Current state:")
+                parts.append("### Current drawing state (use Read tool to view):")
                 for path in auto_images:
-                    filename = Path(path).name
-                    if "review_top" in filename:
-                        parts.append(f"- Top view (Draft geometry): {path}")
-                    else:
-                        parts.append(f"- {filename}: {path}")
+                    # Per-group screenshots: screenshots/{sheet_stem}/{group}.png
+                    p = Path(path)
+                    sheet_stem = p.parent.name
+                    group_label = p.stem.replace("_", " ")
+                    parts.append(f"- {sheet_stem} / {group_label}: {path}")
                 parts.append("")
 
         return "\n".join(parts)
