@@ -985,6 +985,9 @@ Format:
             f"New pages length: {len(new_source) if new_source else 0}\n"
         )
 
+        # For sandbox execution, use version with SHEET_Y_OFFSET injected
+        new_source_for_exec = SourceManager.read_all_pages_for_execution()
+
         # If no backup or no change, just show the text response
         if old_source is None or old_source == new_source:
             FreeCAD.Console.PrintMessage("DrawingAssistant: No page changes detected\n")
@@ -1000,7 +1003,7 @@ Format:
         FreeCAD.Console.PrintMessage(
             f"DrawingAssistant: Creating sandbox for review (attempt {attempt})...\n"
         )
-        success, error_msg, session = self._preview_manager.create_sandbox_for_review(new_source)
+        success, error_msg, session = self._preview_manager.create_sandbox_for_review(new_source_for_exec)
 
         # Capture warnings from sandbox execution
         sandbox_warnings = self._preview_manager.get_last_warnings()
@@ -1482,11 +1485,17 @@ Read the relevant page file to understand what went wrong, then fix it."""
         pages_dir = SourceManager.get_pages_dir()
         helper_paths = SourceManager.list_helper_pages()
 
+        # Build sheet index lookup for SHEET_Y_OFFSET
+        all_pages = SourceManager.list_pages()
+        non_helpers = [p.name for p in all_pages if not p.name.startswith("_")]
+        sheet_index_map = {name: i for i, name in enumerate(non_helpers)}
+
         all_warnings = []
         for filename in sorted(modified + added, key=SourceManager.page_sort_key_str):
             page_path = pages_dir / filename
+            sheet_idx = sheet_index_map.get(filename, 0)
             success, msg, warnings, new_objs = CodeExecutor.execute_single_page(
-                page_path, helper_paths
+                page_path, helper_paths, sheet_index=sheet_idx
             )
             all_warnings.extend(warnings)
             if not success:
@@ -1955,7 +1964,7 @@ Now implement this plan by editing the page files in pages/. Follow the same rul
                 "DrawingAssistant: Claude edited pages during sandbox review, re-executing...\n"
             )
 
-            new_source = SourceManager.read_all_pages()
+            new_source = SourceManager.read_all_pages_for_execution()
             success, error_msg = self._preview_manager.re_execute_in_sandbox(
                 self._sandbox_session, new_source
             )
