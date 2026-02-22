@@ -181,7 +181,7 @@ Use `_helpers.py` for shared utility functions across sheets (e.g. hatching help
 - All dimensions in millimeters
 - End each script with doc.recompute()
 - Coordinate system: X=right, Y=up (2D plan view)
-- Each drawing group within a file MUST use a unique origin offset in Draft space so groups don't overlap in the 3D view. E.g. plan at (0,0), section at (20000,0), detail at (40000,0). Offset by at least 15000mm.
+- The system provides `SHEET_Y_OFFSET` — a unique Y offset for each file so different sheets don't overlap in Draft space. Use it as the base Y for all geometry: e.g. plan at (0, SHEET_Y_OFFSET), section at (20000, SHEET_Y_OFFSET), detail at (40000, SHEET_Y_OFFSET). Offset groups along X by at least 15000mm within a file.
 
 ## FreeCAD 2D API Reference
 
@@ -204,13 +204,13 @@ Use `_helpers.py` for shared utility functions across sheets (e.g. hatching help
 - Add Draft view: group Draft objects into `App::DocumentObjectGroup`, then use ONE `DrawViewDraft` per group. Do NOT create one DrawViewDraft per object (causes overlapping frames).
 - Example with two views on one sheet (use direct variable refs, never doc.getObject lookups):
   ```
-  # --- Group 1: Plan view ---
+  # --- Group 1: Plan view (uses SHEET_Y_OFFSET for Y) ---
   plan_objects = []
-  # ... create geometry ...
+  # ... create geometry at origin (0, SHEET_Y_OFFSET) ...
   plan_grp = doc.addObject("App::DocumentObjectGroup", "PlanGroup")
   plan_grp.Group = plan_objects
 
-  # --- Group 2: Section at offset (20000, 0) ---
+  # --- Group 2: Section at offset (20000, SHEET_Y_OFFSET) ---
   section_objects = []
   # ... create geometry ...
   sec_grp = doc.addObject("App::DocumentObjectGroup", "SectionGroup")

@@ -14,7 +14,7 @@ idempotent patterns. Just create objects directly.
 - All dimensions in millimeters
 - End each script with `doc.recompute()`
 - Coordinate system: X = right, Y = up (2D plan view)
-- Each drawing group within a file must use a unique origin offset so groups don't overlap in 3D view. E.g. plan at (0,0), section at (20000,0). Offset by ≥15000mm.
+- The system provides `SHEET_Y_OFFSET` — use it as the base Y for all geometry so different sheets don't overlap in Draft space. Offset groups along X by ≥15000mm within a file. E.g. plan at (0, SHEET_Y_OFFSET), section at (20000, SHEET_Y_OFFSET).
 
 ## File Organization
 One file = one complete drawing sheet.
