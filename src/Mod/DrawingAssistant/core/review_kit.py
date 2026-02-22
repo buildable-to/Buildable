@@ -277,7 +277,10 @@ def generate_review_kit(
         project_dir, page_object_map, changed_files
     )
 
-    # 2. Inspection JSON with object properties
+    # 2. TechDraw sheet screenshots (the final paper layout)
+    _capture_sheet_screenshots(project_dir, page_object_map, changed_files)
+
+    # 3. Inspection JSON with object properties
     screenshots_dir = Path(project_dir) / "screenshots"
     screenshots_dir.mkdir(parents=True, exist_ok=True)
     kit.inspection_path = _write_inspection_json(change_set, screenshots_dir)
@@ -364,6 +367,81 @@ def _ensure_3d_view():
         pass
 
     return None
+
+
+def _capture_sheet_screenshots(
+    project_dir: str,
+    page_object_map: Optional[Dict[str, Set[str]]] = None,
+    changed_files: Optional[List[str]] = None,
+) -> None:
+    """Capture TechDraw sheet screenshots (the paper layout with all views).
+
+    Finds TechDraw::DrawPage objects, maps them to their sheet file,
+    activates the TechDraw MDI tab, and captures via Qt grab().
+    Saves as screenshots/{sheet_stem}/_sheet.png.
+    """
+    doc = FreeCAD.ActiveDocument
+    if not doc:
+        return
+
+    # Build reverse map
+    obj_to_file: Dict[str, str] = {}
+    if page_object_map:
+        for filename, obj_names in page_object_map.items():
+            for name in obj_names:
+                obj_to_file[name] = filename
+
+    # Find DrawPage objects and map to files
+    pages_to_capture: List[tuple] = []  # (page_obj, filename)
+    for obj in doc.Objects:
+        if obj.TypeId != "TechDraw::DrawPage":
+            continue
+        filename = obj_to_file.get(obj.Name, "_ungrouped")
+        if changed_files is not None and filename not in changed_files:
+            continue
+        pages_to_capture.append((obj, filename))
+
+    if not pages_to_capture:
+        return
+
+    screenshots_dir = Path(project_dir) / "screenshots"
+
+    try:
+        mw = FreeCADGui.getMainWindow()
+        mdi = mw.centralWidget()
+    except Exception:
+        return
+
+    for page_obj, filename in pages_to_capture:
+        stem = Path(filename).stem
+        subdir = screenshots_dir / stem
+        subdir.mkdir(parents=True, exist_ok=True)
+        filepath = subdir / "_sheet.png"
+
+        try:
+            # Activate the TechDraw page — this opens/focuses its MDI tab
+            page_obj.ViewObject.doubleClicked()
+            FreeCADGui.updateGui()
+
+            # Find the TechDraw MDI widget that was just activated
+            for sub in mdi.subWindowList():
+                widget = sub.widget()
+                if widget and "MDIViewPage" in widget.metaObject().className():
+                    # Check if this is the active/focused one
+                    if sub == mdi.activeSubWindow():
+                        pixmap = widget.grab()
+                        pixmap.save(str(filepath))
+                        FreeCAD.Console.PrintMessage(
+                            f"DrawingAssistant: Captured sheet screenshot {stem}/_sheet.png\n"
+                        )
+                        break
+        except Exception as e:
+            FreeCAD.Console.PrintWarning(
+                f"DrawingAssistant: Sheet screenshot failed for {page_obj.Label}: {e}\n"
+            )
+
+    # Switch back to 3D view
+    _ensure_3d_view()
 
 
 def _get_group_children(group_obj) -> List:
