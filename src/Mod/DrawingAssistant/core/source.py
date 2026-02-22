@@ -168,6 +168,34 @@ def read_all_pages() -> str:
     return "\n\n".join(parts)
 
 
+def read_all_pages_for_execution() -> str:
+    """Read all scripts with SHEET_Y_OFFSET injected per sheet file.
+
+    Like read_all_pages() but inserts ``SHEET_Y_OFFSET = N * 100000``
+    before each non-helper file so that each sheet's Draft geometry
+    occupies a unique Y band.  Used by the sandbox which runs a single
+    ``exec()`` on the combined source (no per-file loop).
+
+    Returns:
+        Combined source code string ready for exec().
+    """
+    pages_dir = get_pages_dir()
+    if not pages_dir or not pages_dir.exists():
+        return ""
+
+    parts = []
+    sheet_index = 0
+    for page_path in list_pages():
+        content = read_page(page_path)
+        if content.strip():
+            if not page_path.name.startswith("_"):
+                parts.append(f"SHEET_Y_OFFSET = {sheet_index * 100000}")
+                sheet_index += 1
+            parts.append(f"# --- {page_path.name} ---\n{content}")
+
+    return "\n\n".join(parts)
+
+
 def _count_draft_calls(content: str) -> int:
     """Count Draft.make_* function calls in page content."""
     return len(_RE_DRAFT_CALL.findall(content))

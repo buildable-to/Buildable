@@ -305,7 +305,14 @@ def execute_pages(page_paths: List[Path]) -> tuple:
         page_map: Dict[str, Set[str]] = {}
 
         with WarningCapture() as capture:
+            sheet_index = 0
             for p in page_paths:
+                # Inject SHEET_Y_OFFSET for non-helper files so each
+                # sheet's geometry occupies a unique Y band in Draft space
+                if not p.name.startswith("_"):
+                    namespace["SHEET_Y_OFFSET"] = sheet_index * 100000
+                    sheet_index += 1
+
                 before = {
                     obj.Name for obj in doc.Objects if obj.TypeId not in SKIP_TYPES
                 }
@@ -346,7 +353,9 @@ def execute_pages(page_paths: List[Path]) -> tuple:
 
 
 def execute_single_page(
-    page_path: Path, helper_paths: Optional[List[Path]] = None
+    page_path: Path,
+    helper_paths: Optional[List[Path]] = None,
+    sheet_index: int = 0,
 ) -> Tuple[bool, str, list, Set[str]]:
     """Execute a single page script for incremental rebuild.
 
@@ -357,6 +366,7 @@ def execute_single_page(
         page_path: Path to the page file to execute.
         helper_paths: Paths to _-prefixed helper files to pre-execute
                       (provides shared variables/functions).
+        sheet_index: Position among non-helper files (for SHEET_Y_OFFSET).
 
     Returns:
         Tuple of (success, message, warnings, new_object_names).
@@ -375,6 +385,7 @@ def execute_single_page(
         return False, "No active document", [], set()
 
     namespace = _build_namespace()
+    namespace["SHEET_Y_OFFSET"] = sheet_index * 100000
 
     view_guard = _View3DGuard()
     view_guard.install()
