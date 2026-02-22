@@ -624,11 +624,15 @@ class ClaudeCodeBackend:
             if auto_images:
                 parts.append("### Current drawing state (use Read tool to view):")
                 for path in auto_images:
-                    # Per-group screenshots: screenshots/{sheet_stem}/{group}.png
                     p = Path(path)
                     sheet_stem = p.parent.name
-                    group_label = p.stem.replace("_", " ")
-                    parts.append(f"- {sheet_stem} / {group_label}: {path}")
+                    if p.stem == "_sheet":
+                        # TechDraw page — shows final printed layout with text rendering
+                        parts.append(f"- {sheet_stem} / SHEET LAYOUT (final print view): {path}")
+                    else:
+                        # Draft geometry group — shows raw geometry at full scale
+                        group_label = p.stem.replace("_", " ")
+                        parts.append(f"- {sheet_stem} / {group_label} (Draft geometry): {path}")
                 parts.append("")
 
         return "\n".join(parts)
