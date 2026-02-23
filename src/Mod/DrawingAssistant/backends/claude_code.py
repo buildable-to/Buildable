@@ -337,6 +337,43 @@ hatch_sup = Draft.make_hatch(sup_left, pattern_file="steel", scale=20)
 ```
 Support blocks visually separate the beam from the supporting structure (columns, walls). If hatching is not available, fill with diagonal lines using make_wire.
 
+## ELEVATION: Stirrup Zone Dimension Chain (REQUIRED)
+
+When a beam has variable stirrup spacing (e.g., d8@100 at supports, d8@150 mid-span), ALWAYS add a horizontal dimension chain below the beam outline showing zone boundaries and transition points.
+
+Place the dimension chain at y = y_bottom - 300 in model space (300mm below the beam bottom edge):
+
+```python
+# Zone dimension chain — placed below beam outline
+zone_y = OY_EL - 300      # horizontal line at 300mm below beam
+zone_end = OY_EL - 500    # dimension text offset (further below)
+
+# Left support zone: 0 → left_zone_width
+dim_left = Draft.make_linear_dimension(
+    V(OX_EL, zone_y, 0),
+    V(OX_EL + left_zone, zone_y, 0),
+    V(OX_EL + left_zone/2, zone_end, 0))
+dim_left.Label = "EL_ZoneDim_Left"
+
+# Mid-span zone: left_zone_width → (SPAN - right_zone_width)
+dim_mid = Draft.make_linear_dimension(
+    V(OX_EL + left_zone, zone_y, 0),
+    V(OX_EL + SPAN - right_zone, zone_y, 0),
+    V(OX_EL + SPAN/2, zone_end, 0))
+dim_mid.Label = "EL_ZoneDim_Mid"
+
+# Right support zone: (SPAN - right_zone_width) → SPAN
+dim_right = Draft.make_linear_dimension(
+    V(OX_EL + SPAN - right_zone, zone_y, 0),
+    V(OX_EL + SPAN, zone_y, 0),
+    V(OX_EL + SPAN - right_zone/2, zone_end, 0))
+dim_right.Label = "EL_ZoneDim_Right"
+```
+
+Example for a 6000mm span with 1500/3000/1500 zones: shows "1500 | 3000 | 1500" beneath the elevation.
+
+**Why this is critical:** Without zone dimension boundaries, a contractor cannot accurately locate where the stirrup spacing changes. This is essential for site fabrication and placement.
+
 ## ELEVATION ANNOTATIONS: Border-Safe Label Placement
 
 When placing text labels and annotations in the elevation group, use safe-zone rules to prevent labels from bleeding outside the view boundary on the sheet:
@@ -351,6 +388,28 @@ When placing text labels and annotations in the elevation group, use safe-zone r
 **For POSITION BAR labels** (e.g., "Pos 1  4d20"):
 - Place inside the span: `text_x = SPAN/4` (for bottom bars), `SPAN*3/4` (for top bars)
 - Never use x < 200 or x > SPAN - 200 (stay within interior of span)
+
+## ELEVATION ANNOTATIONS: Avoiding Vertical Label Stacking
+
+When stirrup zone labels AND bar position labels appear in the same X zone, separate them vertically to prevent overlap:
+- Stirrup zone label: `text_y = y_beam_top + 400` (400mm above beam top — higher annotation layer)
+- Bar position label: `text_y = y_beam_top + 200` (200mm above beam top — lower annotation layer)
+- This creates a 200mm vertical gap between the two label layers in model space
+
+Example (right support zone with both Pos 2 bar label and d8@100 stirrup label):
+```python
+# Stirrup zone label (higher)
+stirrup_label_r = Draft.make_text(
+    ["d8@100 (135°)"],
+    V(SPAN - right_zone/4, y_top + 400, 0))
+stirrup_label_r.Label = "EL_StirrupZone_Right"
+
+# Bar position label (lower, slightly left to avoid horizontal overlap)
+bar_label_r = Draft.make_text(
+    ["Pos 2  2d12"],
+    V(SPAN * 0.65, y_top + 200, 0))
+bar_label_r.Label = "EL_Pos2_Right"
+```
 
 **Result**: all labels stay within the interior of the view bounding box and won't extend past the drawing border.
 
@@ -453,7 +512,40 @@ Never add a dimension showing the display width (e.g., "2000mm") — a fabricato
 - ✗ FORBIDDEN: Dimension showing the drawn bar width (2000mm — the display scale, not real bar length)
 - ✗ FORBIDDEN: Dimension showing the drawn hook height (not the actual hook extension)
 
-See rebar_conventions.md for complete code patterns (Type 11 hooks, Type 51 stirrups)
+## BAR SHAPE DIAGRAMS: Include Shape Code Reference
+
+Every bar shape diagram must include the shape code reference for fabricators to cross-reference EN 10221 / BS 8666 bending shape libraries:
+
+**Standard Shape Codes:**
+- **Shape Code 11**: Straight bar with equal hooks at both ends (typical for simply-supported main bars)
+- **Shape Code 01**: Straight bar, no hooks (for special anchorage arrangements)
+- **Shape Code 51**: Rectangular stirrup/link with 135° hook (standard for beam/column ties)
+- **Shape Code 60**: Stirrup with varying dimensions (for complex geometries)
+
+**Include shape code in the label text or as a separate annotation:**
+
+Option 1 — Include in main label text:
+```python
+# Pos 1: straight bar with hooks
+bar_label_1 = Draft.make_text(
+    ["Pos 1  d20  SC-11  L=6330mm  Hook=200mm"],
+    V(diagram_x, diagram_y, 0))
+
+# Pos 3: stirrup with hook
+stirrup_label_3 = Draft.make_text(
+    ["Pos 3  d8  SC-51  L=1488mm  Hook=80mm"],
+    V(diagram_x, diagram_y - 200, 0))
+```
+
+Option 2 — Add separate shape code annotation adjacent to diagram:
+```python
+sc_label = Draft.make_text(["SC-11"], V(shape_diagram_x, shape_diagram_y - 100, 0))
+sc_label.Label = f"ShapeCode_Pos1"
+```
+
+**Why shape codes matter**: Fabrication shops reference BS 8666 / EN 10221 shape libraries. Including the shape code enables direct lookup and cross-referencing without ambiguity about the bend configuration.
+
+See rebar_conventions.md for complete code patterns
 
 ## Important gotchas
 - Object `.Name` is read-only after creation — set only via `doc.addObject("Type", "DesiredName")`
