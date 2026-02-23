@@ -288,145 +288,6 @@ def generate_review_kit(
     return kit
 
 
-def _check_doc_completeness() -> List[str]:
-    """Scan active FreeCAD document for required structural drawing elements.
-
-    Returns:
-        List of check strings showing presence/absence of mandatory elements.
-    """
-    try:
-        doc = FreeCAD.ActiveDocument
-        if not doc:
-            return []
-
-        all_labels = {obj.Label.lower() for obj in doc.Objects}
-        all_types = {obj.TypeId for obj in doc.Objects}
-
-        # Check for bar bending schedule (Spreadsheet)
-        has_spreadsheet = "Spreadsheet::Sheet" in all_types
-
-        # Check for schedule embedded in TechDraw sheet
-        has_view_ssheet = "TechDraw::DrawViewSpreadsheet" in all_types
-
-        # Check for material specification text (contains "material" or "spec" or "grade")
-        has_material = any(
-            "material" in l or "spec" in l or "grade" in l for l in all_labels
-        )
-
-        # Check for stirrups/links/shear reinforcement
-        has_stirrup = any(
-            "stirrup" in l or "link" in l or "shear" in l for l in all_labels
-        )
-
-        # Check for dimension annotations
-        has_dimensions = any(
-            "Dimension" in t or "LinearDimension" in t for t in all_types
-        )
-
-        # Check for title block (_TD.svg template indicates non-blank)
-        templates = [obj for obj in doc.Objects if obj.TypeId == "TechDraw::DrawSVGTemplate"]
-        has_title_block = any(
-            "_TD.svg" in getattr(obj, "Template", "") for obj in templates
-        )
-
-        # Check for longitudinal section (elevation view with bars/stirrups along span)
-        has_longitudinal = any(
-            "longitudinal" in l or "elevation" in l or "span_section" in l
-            or "section_bb" in l or "long_" in l
-            for l in all_labels
-        )
-
-        # Check bar schedule has multiple data rows (not just header)
-        schedule_rows = 0
-        for obj in doc.Objects:
-            if obj.TypeId == "Spreadsheet::Sheet":
-                try:
-                    # Count non-empty rows below header (row 2 onwards)
-                    row = 2
-                    while obj.get(f"A{row}"):
-                        schedule_rows += 1
-                        row += 1
-                except Exception:
-                    pass
-
-        # Check DrawViewSpreadsheet has explicit CellEnd (otherwise only shows row 1)
-        sched_views = [obj for obj in doc.Objects if obj.TypeId == "TechDraw::DrawViewSpreadsheet"]
-        has_cell_end = any(
-            getattr(obj, "CellEnd", "") not in ("", "A1")
-            for obj in sched_views
-        )
-
-        # Check for anchorage geometry (labels containing "anc", "anchorage", "ld")
-        has_anchorage = any(
-            "anc" in l or "anchorage" in l or "_ld" in l or "ld_" in l
-            for l in all_labels
-        )
-
-        # Check for bar shape diagrams (labels containing "shape", "bbs_shape", "barshape")
-        has_shapes = any(
-            "shape_" in l or "barshape" in l or "_shape" in l or "bbs_shape" in l
-            for l in all_labels
-        )
-
-        # Check for general notes
-        has_notes = any("generalnotes" in l or "general_notes" in l for l in all_labels)
-
-        # Check for support blocks in elevation (labels containing "support", "pad", "bearing")
-        has_supports = any(
-            "support" in l or "_pad" in l or "pad_" in l or "bearing" in l or "el_support" in l
-            for l in all_labels
-        )
-
-        # Check for hook dimensions in elevation (labels containing "hook" + "dim", or "hookdim")
-        has_hook_dims = any(
-            ("hook" in l and ("dim" in l or "dimension" in l)) or "hookdim" in l or "_hookdim" in l
-            for l in all_labels
-        )
-
-        # Check schedule has TOTAL weight row (Pos cell = "TOTAL" on last data row)
-        has_total_row = False
-        for obj in doc.Objects:
-            if obj.TypeId == "Spreadsheet::Sheet":
-                try:
-                    row = 2
-                    while obj.get(f"A{row}"):
-                        if str(obj.get(f"A{row}")).upper() == "TOTAL":
-                            has_total_row = True
-                        row += 1
-                except Exception:
-                    pass
-
-        # Determine CellEnd status message
-        if has_cell_end:
-            cellend_status = "✓ YES"
-        elif sched_views:
-            cellend_status = '✗ NO — set sched_view.CellEnd = "G" + str(len(bars)+1)'
-        else:
-            cellend_status = "~ N/A (no spreadsheet view)"
-
-        checks = [
-            f"Bar bending schedule (Spreadsheet): {'✓ PRESENT' if has_spreadsheet else '✗ MISSING'}",
-            f"Schedule embedded in sheet (DrawViewSpreadsheet): {'✓ PRESENT' if has_view_ssheet else '✗ MISSING — use DrawViewSpreadsheet'}",
-            f"Schedule CellEnd set explicitly: {cellend_status}",
-            f"Schedule completeness: {'✓ ' + str(schedule_rows) + ' positions' if schedule_rows > 1 else ('✗ only 1 row — add ALL bar positions' if schedule_rows == 1 else '✗ no data rows')}",
-            f"Schedule TOTAL weight row: {'✓ PRESENT' if has_total_row else '✗ MISSING — add TOTAL row for steel ordering'}",
-            f"Anchorage at supports: {'✓ PRESENT' if has_anchorage else '✗ MISSING — bottom bars must show Ld into supports'}",
-            f"Hook dimension in elevation: {'✓ PRESENT' if has_hook_dims else '? NOT DETECTED — add linear dimension for hook extension'}",
-            f"Support blocks in elevation: {'✓ PRESENT' if has_supports else '? NOT DETECTED — add bearing pad geometry'}",
-            f"Bar shape diagrams: {'✓ PRESENT' if has_shapes else '✗ MISSING — add shape sketch per position'}",
-            f"General notes: {'✓ PRESENT' if has_notes else '✗ MISSING — add general notes text block'}",
-            f"Material spec text: {'✓ PRESENT' if has_material else '✗ MISSING — add concrete/steel grade'}",
-            f"Stirrups/links: {'✓ PRESENT' if has_stirrup else '? NOT DETECTED — verify if required'}",
-            f"Dimension annotations: {'✓ PRESENT' if has_dimensions else '✗ MISSING'}",
-            f"Longitudinal/elevation section: {'✓ PRESENT' if has_longitudinal else '? NOT DETECTED — beam drawings need longitudinal section'}",
-            f"Title block template (_TD.svg): {'✓ PRESENT' if has_title_block else '~ BLANK template — consider _TD.svg for production'}",
-        ]
-
-        return checks
-    except Exception:
-        return []
-
-
 def format_review_prompt(kit: ReviewKit) -> str:
     """Generate the review prompt text listing available files."""
     lines = [
@@ -444,24 +305,16 @@ def format_review_prompt(kit: ReviewKit) -> str:
     if kit.inspection_path:
         lines.append(f"- Object properties (numerical values): {kit.inspection_path}")
 
-    # Add completeness pre-check
-    completeness = _check_doc_completeness()
-    if completeness:
-        lines.extend(["", "COMPLETENESS CHECK:"])
-        for check in completeness:
-            lines.append(f"  {check}")
-
     lines.extend(
         [
             "",
-            "VISUAL CHECKS:",
+            "CHECKS:",
             "- Geometry positioned correctly",
             "- Dimensions showing correct values",
             "- Text labels readable, no overlaps",
             "- No missing or overlapping geometry",
             "",
-            'If CORRECT AND ALL completeness checks show ✓: respond with "LOOKS_GOOD"',
-            "If any ✗ MISSING items: implement them before responding LOOKS_GOOD.",
+            'If CORRECT: respond with "LOOKS_GOOD"',
             "If PROBLEMS: explain briefly and edit the relevant page file to fix.",
         ]
     )

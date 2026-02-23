@@ -33,159 +33,6 @@ _captured_warnings = []
 _page_object_map: Optional[Dict[str, Set[str]]] = None
 _tracked_doc_name: Optional[str] = None
 
-# ============================================================
-# DRAWING COMPLETENESS REQUIREMENTS
-# ============================================================
-
-ELEMENT_REQUIREMENTS = {
-    "beam_complete": {
-        "mandatory": [
-            "rebar_geometry",
-            "stirrups",
-            "cross_section",
-            "longitudinal_section",
-            "anchorage_details",
-            "bar_schedule",
-            "bar_shape_diagrams",
-            "material_spec",
-            "general_notes",
-            "dimensions",
-            "span_dimension",
-        ],
-        "description": "Complete beam drawing with cross-section + longitudinal elevation (both views on same sheet)",
-    },
-    "beam_section": {
-        "mandatory": [
-            "rebar_geometry",
-            "stirrups",
-            "cross_section",
-            "bar_schedule",
-            "bar_shape_diagrams",
-            "material_spec",
-            "general_notes",
-            "dimensions",
-            "span_dimension",
-        ],
-        "description": "Beam reinforcement section drawing (cross-section perpendicular to span)",
-    },
-    "beam_elevation": {
-        "mandatory": [
-            "rebar_geometry",
-            "stirrups",
-            "longitudinal_section",
-            "anchorage_details",
-            "bar_schedule",
-            "bar_shape_diagrams",
-            "material_spec",
-            "general_notes",
-            "dimensions",
-            "span_dimension",
-        ],
-        "description": "Beam elevation drawing (longitudinal section along span)",
-    },
-    "slab_section": {
-        "mandatory": [
-            "rebar_geometry",
-            "transverse_bars",
-            "bar_schedule",
-            "material_spec",
-            "dimensions",
-            "span_dimension",
-        ],
-        "description": "Slab reinforcement section drawing",
-    },
-    "column_section": {
-        "mandatory": [
-            "rebar_geometry",
-            "links",
-            "cross_section",
-            "bar_schedule",
-            "material_spec",
-            "dimensions",
-        ],
-        "description": "Column reinforcement section drawing",
-    },
-    "foundation_section": {
-        "mandatory": ["rebar_geometry", "bar_schedule", "material_spec", "dimensions"],
-        "description": "Foundation reinforcement section drawing",
-    },
-    "formwork": {
-        "mandatory": ["outline_geometry", "dimensions"],
-        "description": "Formwork/shuttering drawing (no reinforcement)",
-    },
-    "general": {
-        "mandatory": [],
-        "description": "General drawing (no specific requirements)",
-    },
-}
-
-
-def parse_drawing_spec(code: str) -> Optional[Dict[str, str]]:
-    """Parse DRAWING_SPEC comment header from page file content.
-
-    Expected format (at file top, before any code):
-    # DRAWING_SPEC:
-    # type: beam_section
-    # elements: rebar_geometry, stirrups, cross_section, bar_schedule, material_spec
-    # rebar: 4d20 bottom, 2d12 top, d8@150 stirrups
-    # concrete: C35/45, cover 40mm, exposure XC3
-
-    Args:
-        code: Python source code string
-
-    Returns:
-        Dict with parsed spec fields (e.g. {'type': 'beam_section', 'elements': '...'})
-        or None if no DRAWING_SPEC header found.
-    """
-    spec = {}
-    in_spec = False
-    for line in code.split("\n"):
-        stripped = line.strip()
-        if stripped == "# DRAWING_SPEC:":
-            in_spec = True
-            continue
-        if in_spec:
-            if not stripped.startswith("#"):
-                break  # End of spec block
-            # Parse "# key: value" pairs
-            content = stripped[1:].strip()  # Remove leading #
-            if ": " in content:
-                key, value = content.split(": ", 1)
-                spec[key.strip()] = value.strip()
-    return spec if spec else None
-
-
-def validate_drawing_spec(spec: Optional[Dict[str, str]]) -> str:
-    """Validate a parsed DRAWING_SPEC against ELEMENT_REQUIREMENTS.
-
-    Args:
-        spec: Parsed drawing spec dict (or None for backward compatibility)
-
-    Returns:
-        Empty string if valid or no spec found (backward compatible).
-        Error message if spec is present but mandatory elements are missing.
-    """
-    if not spec:
-        return ""  # No spec = backward compatible, allow through
-
-    element_type = spec.get("type", "general")
-    requirements = ELEMENT_REQUIREMENTS.get(element_type, ELEMENT_REQUIREMENTS["general"])
-
-    declared_elements_str = spec.get("elements", "")
-    declared_elements = {e.strip() for e in declared_elements_str.split(",") if e.strip()}
-
-    mandatory = requirements["mandatory"]
-    missing = [elem for elem in mandatory if elem not in declared_elements]
-
-    if missing:
-        missing_list = ", ".join(missing)
-        return (
-            f"DRAWING_SPEC validation failed for type '{element_type}': "
-            f"Missing mandatory elements: {missing_list}. "
-            f"Add these to the 'elements:' line in the DRAWING_SPEC header and implement them."
-        )
-    return ""
-
 SKIP_TYPES = ("App::Origin", "App::Plane", "App::Line")
 
 
@@ -445,14 +292,6 @@ def execute_pages(page_paths: List[Path]) -> tuple:
     if safety_result:
         return False, safety_result, []
 
-    # Validate DRAWING_SPEC headers for mandatory elements
-    for p_name, content in page_contents.items():
-        if not p_name.startswith("_"):  # Skip helper files
-            spec = parse_drawing_spec(content)
-            spec_error = validate_drawing_spec(spec)
-            if spec_error:
-                return False, spec_error, []
-
     doc = FreeCAD.ActiveDocument
     if not doc:
         return False, "No active document", []
@@ -540,12 +379,6 @@ def execute_single_page(
     safety_result = _safety_check(code)
     if safety_result:
         return False, safety_result, [], set()
-
-    # Validate DRAWING_SPEC header for mandatory elements
-    spec = parse_drawing_spec(code)
-    spec_error = validate_drawing_spec(spec)
-    if spec_error:
-        return False, spec_error, [], set()
 
     doc = FreeCAD.ActiveDocument
     if not doc:
