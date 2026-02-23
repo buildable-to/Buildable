@@ -288,6 +288,61 @@ def generate_review_kit(
     return kit
 
 
+def _check_doc_completeness() -> List[str]:
+    """Scan active FreeCAD document for required structural drawing elements.
+
+    Returns:
+        List of check strings showing presence/absence of mandatory elements.
+    """
+    try:
+        doc = FreeCAD.ActiveDocument
+        if not doc:
+            return []
+
+        all_labels = {obj.Label.lower() for obj in doc.Objects}
+        all_types = {obj.TypeId for obj in doc.Objects}
+
+        # Check for bar bending schedule (Spreadsheet)
+        has_spreadsheet = "Spreadsheet::Sheet" in all_types
+
+        # Check for schedule embedded in TechDraw sheet
+        has_view_ssheet = "TechDraw::DrawViewSpreadsheet" in all_types
+
+        # Check for material specification text (contains "material" or "spec" or "grade")
+        has_material = any(
+            "material" in l or "spec" in l or "grade" in l for l in all_labels
+        )
+
+        # Check for stirrups/links/shear reinforcement
+        has_stirrup = any(
+            "stirrup" in l or "link" in l or "shear" in l for l in all_labels
+        )
+
+        # Check for dimension annotations
+        has_dimensions = any(
+            "Dimension" in t or "LinearDimension" in t for t in all_types
+        )
+
+        # Check for title block (_TD.svg template indicates non-blank)
+        templates = [obj for obj in doc.Objects if obj.TypeId == "TechDraw::DrawSVGTemplate"]
+        has_title_block = any(
+            "_TD.svg" in getattr(obj, "Template", "") for obj in templates
+        )
+
+        checks = [
+            f"Bar bending schedule (Spreadsheet): {'✓ PRESENT' if has_spreadsheet else '✗ MISSING'}",
+            f"Schedule embedded in sheet (DrawViewSpreadsheet): {'✓ PRESENT' if has_view_ssheet else '✗ MISSING — use DrawViewSpreadsheet'}",
+            f"Material spec text: {'✓ PRESENT' if has_material else '✗ MISSING — add concrete/steel grade'}",
+            f"Stirrups/links: {'✓ PRESENT' if has_stirrup else '? NOT DETECTED — verify if required'}",
+            f"Dimension annotations: {'✓ PRESENT' if has_dimensions else '✗ MISSING'}",
+            f"Title block template (_TD.svg): {'✓ PRESENT' if has_title_block else '~ BLANK template — consider _TD.svg for production'}",
+        ]
+
+        return checks
+    except Exception:
+        return []
+
+
 def format_review_prompt(kit: ReviewKit) -> str:
     """Generate the review prompt text listing available files."""
     lines = [
@@ -305,16 +360,24 @@ def format_review_prompt(kit: ReviewKit) -> str:
     if kit.inspection_path:
         lines.append(f"- Object properties (numerical values): {kit.inspection_path}")
 
+    # Add completeness pre-check
+    completeness = _check_doc_completeness()
+    if completeness:
+        lines.extend(["", "COMPLETENESS CHECK:"])
+        for check in completeness:
+            lines.append(f"  {check}")
+
     lines.extend(
         [
             "",
-            "CHECKS:",
+            "VISUAL CHECKS:",
             "- Geometry positioned correctly",
             "- Dimensions showing correct values",
             "- Text labels readable, no overlaps",
             "- No missing or overlapping geometry",
             "",
-            'If CORRECT: respond with "LOOKS_GOOD"',
+            'If CORRECT AND ALL completeness checks show ✓: respond with "LOOKS_GOOD"',
+            "If any ✗ MISSING items: implement them before responding LOOKS_GOOD.",
             "If PROBLEMS: explain briefly and edit the relevant page file to fix.",
         ]
     )
