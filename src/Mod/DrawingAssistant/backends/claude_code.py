@@ -249,6 +249,7 @@ Use `_helpers.py` for shared utility functions across sheets (e.g. hatching help
   Standard scales: 1:20, 1:50, 1:100, 1:200, 1:500. Pick the largest that fits with margin.
 - Text size: set `view.FontSize` on DrawViewDraft to control text size on the sheet. Draft object FontSizes are IGNORED in the rendered view. Use FontSize=8.0 for 1:20 details, FontSize=5.0 for 1:50 plans, FontSize=2.5 for 1:100 plans. Larger scale -> larger FontSize.
 - Line spacing: ALWAYS set `view.LineSpacing = view.FontSize * 0.7` alongside FontSize. Default LineSpacing=1.0 causes multi-line text to overlap.
+- Line weight: ALWAYS set `view.LineWidth` to control line thickness on the sheet. Standard values: geometry views (cross-section, elevation) = 0.35mm; bar shape diagrams = 0.25mm; text/notes = 0.18mm. Without explicit LineWidth, FreeCAD defaults to thick (~1.0mm+) lines.
 
 ## HEIGHT-AWARE VIEW PLACEMENT (MANDATORY for views in the bottom zone)
 
