@@ -371,25 +371,6 @@ class ClaudeCodeBackend:
                         f"DrawingAssistant: Failed to read project.md: {e}\n"
                     )
 
-            # Append reference documents listing
-            ref_dir = Path(self.project_dir) / "reference_docs"
-            if ref_dir.exists():
-                docs = sorted(
-                    f for f in ref_dir.iterdir()
-                    if f.is_file() and not f.name.startswith(".")
-                )
-                if docs:
-                    listing = "\n".join(
-                        f"- {f.name} ({f.stat().st_size / 1024:.0f} KB)"
-                        for f in docs
-                    )
-                    system_prompt += (
-                        f"\n\n## Available Reference Documents\n{listing}\n"
-                        "Use the Read tool to consult these when relevant "
-                        "(in reference_docs/ directory). "
-                        "For PDFs, use the pages parameter."
-                    )
-
         cmd.extend(["--append-system-prompt", system_prompt])
         self.last_system_prompt = system_prompt
 
