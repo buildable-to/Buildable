@@ -371,6 +371,31 @@ def _check_doc_completeness() -> List[str]:
         # Check for general notes
         has_notes = any("generalnotes" in l or "general_notes" in l for l in all_labels)
 
+        # Check for support blocks in elevation (labels containing "support", "pad", "bearing")
+        has_supports = any(
+            "support" in l or "_pad" in l or "pad_" in l or "bearing" in l or "el_support" in l
+            for l in all_labels
+        )
+
+        # Check for hook dimensions in elevation (labels containing "hook" + "dim", or "hookdim")
+        has_hook_dims = any(
+            ("hook" in l and ("dim" in l or "dimension" in l)) or "hookdim" in l or "_hookdim" in l
+            for l in all_labels
+        )
+
+        # Check schedule has TOTAL weight row (Pos cell = "TOTAL" on last data row)
+        has_total_row = False
+        for obj in doc.Objects:
+            if obj.TypeId == "Spreadsheet::Sheet":
+                try:
+                    row = 2
+                    while obj.get(f"A{row}"):
+                        if str(obj.get(f"A{row}")).upper() == "TOTAL":
+                            has_total_row = True
+                        row += 1
+                except Exception:
+                    pass
+
         # Determine CellEnd status message
         if has_cell_end:
             cellend_status = "✓ YES"
@@ -384,7 +409,10 @@ def _check_doc_completeness() -> List[str]:
             f"Schedule embedded in sheet (DrawViewSpreadsheet): {'✓ PRESENT' if has_view_ssheet else '✗ MISSING — use DrawViewSpreadsheet'}",
             f"Schedule CellEnd set explicitly: {cellend_status}",
             f"Schedule completeness: {'✓ ' + str(schedule_rows) + ' positions' if schedule_rows > 1 else ('✗ only 1 row — add ALL bar positions' if schedule_rows == 1 else '✗ no data rows')}",
+            f"Schedule TOTAL weight row: {'✓ PRESENT' if has_total_row else '✗ MISSING — add TOTAL row for steel ordering'}",
             f"Anchorage at supports: {'✓ PRESENT' if has_anchorage else '✗ MISSING — bottom bars must show Ld into supports'}",
+            f"Hook dimension in elevation: {'✓ PRESENT' if has_hook_dims else '? NOT DETECTED — add linear dimension for hook extension'}",
+            f"Support blocks in elevation: {'✓ PRESENT' if has_supports else '? NOT DETECTED — add bearing pad geometry'}",
             f"Bar shape diagrams: {'✓ PRESENT' if has_shapes else '✗ MISSING — add shape sketch per position'}",
             f"General notes: {'✓ PRESENT' if has_notes else '✗ MISSING — add general notes text block'}",
             f"Material spec text: {'✓ PRESENT' if has_material else '✗ MISSING — add concrete/steel grade'}",

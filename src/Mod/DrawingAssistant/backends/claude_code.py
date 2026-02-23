@@ -250,21 +250,37 @@ Use `_helpers.py` for shared utility functions across sheets (e.g. hatching help
 - Text size: set `view.FontSize` on DrawViewDraft to control text size on the sheet. Draft object FontSizes are IGNORED in the rendered view. Use FontSize=5.0 for 1:100 plans, FontSize=8.0 for 1:20 details. Larger scale -> larger FontSize.
 - Line spacing: ALWAYS set `view.LineSpacing = view.FontSize * 0.7` alongside FontSize. Default LineSpacing=1.0 causes multi-line text to overlap.
 
-## View Positioning to Prevent Overlaps
+## HEIGHT-AWARE VIEW PLACEMENT (MANDATORY for views in the bottom zone)
 
-A3 Landscape sheet safe area: X 20–400mm, Y 55–260mm (title block zone is Y 0–50mm).
+A3 Landscape sheet: title block zone Y 0–50mm, safe area Y 55–260mm, safe X 20–400mm.
 
-**Standard layout for beam_complete on A3 Landscape:**
-- Cross-section (1:20, ~100mm wide × 75mm tall): X=50, Y=160
-- Longitudinal elevation (1:50, ~180mm wide × 50mm tall): X=210, Y=220
-- Bar shape diagrams (1:10, ~80mm wide × 120mm tall): X=340, Y=180
-- Bar schedule (DrawViewSpreadsheet): X=280, Y=80 (above title block zone)
-- Material spec + general notes view (1:20, ~150mm wide): X=50, Y=75
+**For views in the lower half (Y < 120mm), ALWAYS compute height first before placing:**
+
+Multi-line text views (DrawViewDraft with notes/material spec):
+```
+height_mm = num_lines × FontSize × 1.3
+Y_center = max(55 + height_mm/2 + 10, 90)
+Example: 8 lines × FontSize=7 × 1.3 = 73mm → Y = max(55+36+10, 90) = 101
+```
+
+DrawViewSpreadsheet (schedule tables):
+```
+height_mm = (num_data_rows + 2) × 7   # header + data + total row, ~7mm/row
+Y_center = max(55 + height_mm/2 + 10, 90)
+Example: 3 bars + header + total = 5 rows → 35mm → Y = max(55+18+10, 90) = 90
+```
+
+**UPDATED standard layout for beam_complete on A3 Landscape:**
+- Cross-section (1:20, ~100mm wide × 75mm tall): X=80, Y=190
+- Longitudinal elevation (1:50, ~180mm wide × 50mm tall): X=230, Y=235
+- Bar shape diagrams (1:20, ~80mm wide × 120mm tall): X=355, Y=160
+- Bar schedule: X=260, Y = (compute based on num_bars)
+- General notes + material spec: X=80, Y = (compute based on num_lines)
 
 **RULES:**
-1. Never place any view below Y=55 — that's the title block territory.
-2. After placing all views, verify total X extents don't exceed 400mm (sum of widths + margins).
-3. When multiple views occupy the same Y zone, stack them with 10–20mm vertical spacing.
+1. Never place view center below Y=70 — this ensures bottom edge ≥ Y=55.
+2. Use the height calculation formula for all multi-line text and schedule views.
+3. After placing all views, verify total X extent ≤ 400mm (sum of widths + margins).
 
 ### Spreadsheet (tables, schedules)
 - Create: `sheet = doc.addObject("Spreadsheet::Sheet", "SheetName")`
@@ -276,10 +292,10 @@ A3 Landscape sheet safe area: X 20–400mm, Y 55–260mm (title block zone is Y 
   sched_view.Source = schedule
   page.addView(sched_view)
   sched_view.CellStart = "A1"
-  sched_view.CellEnd = "G" + str(len(bars) + 1)  # header row + all data rows
-  sched_view.X = 280; sched_view.Y = 80
+  sched_view.CellEnd = "G" + str(len(bars) + 2)  # header + data rows + TOTAL row
+  sched_view.X = 260; sched_view.Y = compute_safe_y(len(bars))  # height-aware placement
   ```
-  Without explicit CellEnd, TechDraw defaults to showing only the header + 1 data row, regardless of how many rows the schedule contains. Set CellEnd to the last column and last row, e.g., "G7" for 6 bar positions + header.
+  Without explicit CellEnd, TechDraw defaults to showing only the header + 1 data row. Set CellEnd to include all data rows PLUS the TOTAL weight row (add 2, not 1). Example: for 3 bar positions, CellEnd = "G5" (header + 3 data + 1 total = 5 rows).
 
 ## Engineering Helpers (in _engineering_base.py — auto-created, always available)
 Pre-built functions for common drawing elements. Use these for stirrups, bar schedules, and material specs instead of reimplementing:
@@ -301,8 +317,25 @@ Example: `stirrup.Label = "Stirrup_Outer"` and `mat_spec.Label = "MaterialSpec"`
 A complete beam drawing ALWAYS includes TWO companion views:
 1. **Cross-section** (perpendicular to span) — shows bar arrangement, stirrup layout, cover, depth
 2. **Longitudinal elevation** (along span) — shows bar distribution, stirrup spacing zones, span dimension, anchorage
+
 Use DRAWING_SPEC type: `beam_complete` and declare BOTH `cross_section` and `longitudinal_section` in the elements line.
 Place both views on the SAME TechDraw sheet if they fit (offset geometries by ≥15000mm in X within the page file).
+
+**BEAM ELEVATION: Support blocks required.** Always draw support blocks (bearing pads, column stubs) at each end of the beam to show the structural context:
+```python
+# Left support block (e.g., 300mm wide × 200mm tall)
+sup_left = Draft.make_wire([
+    V(OX_EL - 300, OY_EL, 0),      # bottom-left
+    V(OX_EL, OY_EL, 0),             # bottom-right
+    V(OX_EL, OY_EL - 200, 0),       # top-right
+    V(OX_EL - 300, OY_EL - 200, 0), # top-left
+], closed=True)
+sup_left.Label = "EL_SupportLeft"
+
+# Optionally hatch the support to differentiate from beam concrete
+hatch_sup = Draft.make_hatch(sup_left, pattern_file="steel", scale=20)
+```
+Support blocks visually separate the beam from the supporting structure (columns, walls). If hatching is not available, fill with diagonal lines using make_wire.
 
 ## BAR SCHEDULE: Every Position Must Appear
 The bar bending schedule MUST include EVERY position declared in the drawing geometry.
@@ -351,15 +384,34 @@ On each stirrup shape diagram, ALWAYS dimension the hook extension length:
 
 **CRITICAL: Do not mix strategies.** If geometry shows hooks inside the beam, do NOT also draw 800mm extension lines outside the span.
 
-For simply supported beams: **Strategy A is standard.** Draw hooks at ends, use hooks for anchorage. Dimension the hook or annotate the equivalent anchorage length. See rebar_conventions.md for complete geometry code patterns.
+For simply supported beams: **Strategy A is standard.** Draw hooks at ends, use hooks for anchorage.
+
+**HOOK DIMENSION REQUIRED ON ELEVATION**: Even with Strategy A, ALWAYS add a linear dimension at the beam ends showing the hook extension length using `Draft.make_linear_dimension`:
+```
+hook_dim = Draft.make_linear_dimension(
+    V(x_end, y_bar, 0), V(x_end, y_bar + HOOK_A, 0),
+    V(x_end + 300, y_bar + HOOK_A/2, 0))
+hook_dim.Label = "EL_HookDim_Right"
+```
+This makes the anchorage mechanically legible on the printed drawing — fabricators and inspectors see the hook depth immediately.
+
+See rebar_conventions.md for complete geometry code patterns.
 
 ## BAR SHAPE DIAGRAMS: Required for complete drawings
+
 Every position in the bar schedule must have a companion shape diagram:
 - Draw small schematic outlines showing the bar's bent profile with critical dimensions
 - Include total bar length, hook extensions, position number, and shape code if applicable
 - Group all shape diagrams together and display at smaller scale (1:5 or 1:10) beside the bar schedule
-- Label each shape with Pos number, diameter, and total length
-- See rebar_conventions.md for complete code patterns (Type 11 hooks, Type 51 stirrups)
+
+**DIMENSION RULES (CRITICAL):**
+- **PRIMARY DIMENSION MUST BE THE ACTUAL CUT LENGTH** — the same number as in the BBS Length column
+- Do NOT dimension the diagram's display width — the diagram is drawn at a scaled size but dimensions must show fabrication values
+- For Type 11 (straight bar with equal hooks at both ends): dimension the total length (e.g., "6170mm"), then separately dimension each hook extension (e.g., "Hook = 120mm (10d)") using `make_linear_dimension`
+- For Type 51 (stirrups): show inner width and inner height as main dimensions, then separately dimension the hook extension (e.g., "Hook = 80mm (10d)")
+- Label text must include: "Pos X  dY  L=Zmm  Hook=Wmm"
+
+See rebar_conventions.md for complete code patterns (Type 11 hooks, Type 51 stirrups)
 
 ## Important gotchas
 - Object `.Name` is read-only after creation — set only via `doc.addObject("Type", "DesiredName")`
@@ -489,6 +541,7 @@ def make_bar_schedule(doc, bars, name="BarSchedule"):
 
     # Data rows
     DENSITY = 7850  # kg/m³ for steel
+    total_all_wt = 0.0
     for row, bar in enumerate(bars, start=2):
         dia = bar.get("dia", 0)
         length_mm = bar.get("length_mm", 0)
@@ -498,6 +551,7 @@ def make_bar_schedule(doc, bars, name="BarSchedule"):
             math.pi / 4 * (dia**2) * DENSITY / 1e6
         )
         total_wt = unit_wt * (length_mm / 1000) * qty
+        total_all_wt += total_wt
 
         sht.set(f"A{row}", str(bar.get("pos", "")))
         sht.set(f"B{row}", str(dia))
@@ -506,6 +560,11 @@ def make_bar_schedule(doc, bars, name="BarSchedule"):
         sht.set(f"E{row}", str(qty))
         sht.set(f"F{row}", f"{unit_wt:.3f}")
         sht.set(f"G{row}", f"{total_wt:.1f}")
+
+    # Total weight row
+    total_row = len(bars) + 2
+    sht.set(f"A{total_row}", "TOTAL")
+    sht.set(f"G{total_row}", f"{total_all_wt:.1f}")
 
     return sht
 

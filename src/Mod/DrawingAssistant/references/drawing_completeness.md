@@ -199,7 +199,7 @@ Always annotate stirrup spacing with the hook angle:
 
 ## Quick Reference: Code Snippets
 
-### Bar Bending Schedule (Spreadsheet with CellEnd)
+### Bar Bending Schedule (Spreadsheet with CellEnd and Total Row)
 ```python
 sht = doc.addObject("Spreadsheet::Sheet", "BarSchedule")
 headers = ["Pos", "Ø (mm)", "Shape", "Total Length (mm)", "Qty", "Unit Weight (kg/m)", "Total Weight (kg)"]
@@ -213,19 +213,26 @@ bars = [
     {"pos": "2", "dia": 12, "shape": "Straight", "length_mm": 2800, "qty": 2},
     {"pos": "3", "dia": 8, "shape": "Hook", "length_mm": 500, "qty": 12},
 ]
-# Fill spreadsheet with bar rows (omitted for brevity)
+# Fill spreadsheet with bar rows using make_bar_schedule() helper (which now adds TOTAL row automatically)
 
-# Embed in TechDraw sheet
+# Embed in TechDraw sheet — height-aware Y placement
+num_rows = len(bars) + 2  # header + data + total row
+schedule_height_mm = num_rows * 7  # ~7mm per row
+sched_y = max(55 + schedule_height_mm/2 + 10, 90)  # safe Y calculation
+
 sched_view = doc.addObject("TechDraw::DrawViewSpreadsheet", "ScheduleView")
 sched_view.Source = sht
 page.addView(sched_view)
 sched_view.CellStart = "A1"
-sched_view.CellEnd = f"G{len(bars) + 1}"  # CRITICAL: must be explicit, default shows only 1 row
-sched_view.X = 280
-sched_view.Y = 80
+sched_view.CellEnd = f"G{len(bars) + 2}"  # header + data rows + TOTAL (add 2, not 1)
+sched_view.X = 260
+sched_view.Y = sched_y  # computed safe position above title block
 ```
 
-**CRITICAL:** Without explicit `CellEnd`, TechDraw defaults to showing only the header row + 1 data row, regardless of how many data rows exist in the spreadsheet. Always set `CellEnd` to the last column letter and last row number, e.g., `"G7"` for 6 bar positions + 1 header row.
+**CRITICAL:**
+1. Without explicit `CellEnd`, TechDraw shows only header + 1 data row. Must include TOTAL row: `len(bars) + 2` (not +1).
+2. Use height-aware Y placement: `Y = max(55 + height/2 + 10, 90)` to keep bottom edge above title block zone.
+3. The `make_bar_schedule()` helper now adds a TOTAL weight row automatically. If using manual spreadsheet entry, append "TOTAL" row manually in column A and sum all weights in column G.
 
 ### Material Specification Text Block
 ```python
@@ -304,14 +311,19 @@ Before responding "LOOKS_GOOD" in drawing review, verify:
 - [ ] **Anchorage strategy consistent** (hooks-within-span OR straight-extensions, not both)
 - [ ] Overall width/height/span dimensions present
 - [ ] Bar bending schedule visible in sheet (DrawViewSpreadsheet embedded)
-- [ ] **Bar schedule shows ALL positions** (Pos 1, 2, 3...) — CellEnd must be set explicitly
+- [ ] **Bar schedule shows ALL positions** (Pos 1, 2, 3...) — CellEnd must be set explicitly (including TOTAL row)
+- [ ] **Bar schedule includes TOTAL weight row** at bottom (sum of all bar weights for ordering)
 - [ ] **Bar shape diagrams present** for each position — small bent-shape sketch with dimensions
-- [ ] **Stirrup hook dimensions labeled** on shape diagrams (e.g., "5d = 40mm")
+- [ ] **Bar shape diagram PRIMARY dimension shows ACTUAL CUT LENGTH** (not diagram display width)
+- [ ] **Stirrup hook dimensions labeled** on shape diagrams (e.g., "Hook = 80mm (10d)")
 - [ ] Material spec text block readable (concrete grade, steel grade, cover, exposure visible)
 - [ ] **General notes block present** (at least 5 standard notes: dims in mm, bending per EN, lap length, spacers, etc.)
 - [ ] Section titles present (e.g., "SECTION A-A, Scale 1:20")
-- [ ] **Views positioned above Y=55mm** on sheet (no overlap with title block zone)
-- [ ] All views fit horizontally (total extent < 380mm)
+- [ ] **Views positioned above Y=55mm** on sheet (no overlap with title block zone) — use height-aware Y calculation
+- [ ] **Support blocks drawn** in beam elevation (bearing pads/column stubs at span ends)
+- [ ] **Hook dimension arrows visible** on elevation at beam ends (linear dimension showing anchorage depth)
+- [ ] All views fit horizontally (total extent < 400mm)
+- [ ] No overlapping text or views on printed sheet
 - [ ] Title block template used (_TD.svg, not blank)
 - [ ] Title block fields populated (title, drawing number, scale, date)
 - [ ] All text readable, no overlapping dimensions or labels
