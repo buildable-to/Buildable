@@ -371,10 +371,18 @@ def _check_doc_completeness() -> List[str]:
         # Check for general notes
         has_notes = any("generalnotes" in l or "general_notes" in l for l in all_labels)
 
+        # Determine CellEnd status message
+        if has_cell_end:
+            cellend_status = "✓ YES"
+        elif sched_views:
+            cellend_status = '✗ NO — set sched_view.CellEnd = "G" + str(len(bars)+1)'
+        else:
+            cellend_status = "~ N/A (no spreadsheet view)"
+
         checks = [
             f"Bar bending schedule (Spreadsheet): {'✓ PRESENT' if has_spreadsheet else '✗ MISSING'}",
             f"Schedule embedded in sheet (DrawViewSpreadsheet): {'✓ PRESENT' if has_view_ssheet else '✗ MISSING — use DrawViewSpreadsheet'}",
-            f"Schedule CellEnd set explicitly: {'✓ YES' if has_cell_end else ('✗ NO — set sched_view.CellEnd = \"G\" + str(len(bars)+1)' if sched_views else '~ N/A (no spreadsheet view)')}",
+            f"Schedule CellEnd set explicitly: {cellend_status}",
             f"Schedule completeness: {'✓ ' + str(schedule_rows) + ' positions' if schedule_rows > 1 else ('✗ only 1 row — add ALL bar positions' if schedule_rows == 1 else '✗ no data rows')}",
             f"Anchorage at supports: {'✓ PRESENT' if has_anchorage else '✗ MISSING — bottom bars must show Ld into supports'}",
             f"Bar shape diagrams: {'✓ PRESENT' if has_shapes else '✗ MISSING — add shape sketch per position'}",
