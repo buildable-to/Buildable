@@ -229,14 +229,14 @@ Use `_helpers.py` for shared utility functions across sheets (e.g. hatching help
   plan_view.Scale = 0.02         # 1:50
   page.addView(plan_view)
   plan_view.X = 130; plan_view.Y = 170
-  plan_view.FontSize = 5.0; plan_view.LineSpacing = 3.5
+  plan_view.FontSize = 150; plan_view.LineSpacing = 105  # 3mm text at 1:50
 
   sec_view = doc.addObject("TechDraw::DrawViewDraft", "SectionView")
   sec_view.Source = sec_grp      # direct ref — always fresh
   sec_view.Scale = 0.02
   page.addView(sec_view)
   sec_view.X = 330; sec_view.Y = 170
-  sec_view.FontSize = 5.0; sec_view.LineSpacing = 3.5
+  sec_view.FontSize = 150; sec_view.LineSpacing = 105  # 3mm text at 1:50
   ```
 - Sheet sizes: A3 Landscape = 420x297mm, A4 Landscape = 297x210mm.
 - Page coordinate system: origin (0,0) is at BOTTOM-LEFT, X increases RIGHT, Y increases UP. So Y=0 is the BOTTOM of the page and Y=297 is the TOP. Title block occupies ~45mm at bottom (low Y values). Safe area for views: X 20-400, Y 50-260.
@@ -247,7 +247,7 @@ Use `_helpers.py` for shared utility functions across sheets (e.g. hatching help
   # A3 usable area: 380 x 250mm -> pick 1:N where both fit
   ```
   Standard scales: 1:20, 1:50, 1:100, 1:200, 1:500. Pick the largest that fits with margin.
-- Text size: set `view.FontSize` on DrawViewDraft to control text size on the sheet. Draft object FontSizes are IGNORED in the rendered view. Use FontSize=8.0 for 1:20 details, FontSize=5.0 for 1:50 plans, FontSize=2.5 for 1:100 plans. Larger scale -> larger FontSize.
+- Text size: `view.FontSize` on DrawViewDraft controls ALL text (Draft object FontSizes are IGNORED). Formula: `printed_mm = FontSize × Scale`, so `FontSize = desired_mm / Scale`. Example: for 3mm printed text at 1:20 (Scale=0.05), FontSize=60. Note: FontSize also defines text height in model space — dimension offsets and label positions must leave enough room.
 - Line spacing: ALWAYS set `view.LineSpacing = view.FontSize * 0.7` alongside FontSize. Default LineSpacing=1.0 causes multi-line text to overlap.
 - Line weight: ALWAYS set `view.LineWidth` to control line thickness on the sheet. Standard values: geometry views (cross-section, elevation) = 0.35mm; bar shape diagrams = 0.25mm; text/notes = 0.18mm. Without explicit LineWidth, FreeCAD defaults to thick (~1.0mm+) lines.
 
