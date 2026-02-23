@@ -337,6 +337,36 @@ hatch_sup = Draft.make_hatch(sup_left, pattern_file="steel", scale=20)
 ```
 Support blocks visually separate the beam from the supporting structure (columns, walls). If hatching is not available, fill with diagonal lines using make_wire.
 
+## ELEVATION ANNOTATIONS: Border-Safe Label Placement
+
+When placing text labels and annotations in the elevation group, use safe-zone rules to prevent labels from bleeding outside the view boundary on the sheet:
+
+**For STIRRUP ZONE labels** (e.g., "Pos 3 d8@100 (135°)"):
+- Place the label ABOVE the beam outline, not to the side: `text_y = y_beam_top + 200` (200mm above beam in model space)
+- For left zone: `text_x = zone_left + (zone_width / 4)` (quarter into zone, not at edge)
+- For right zone: `text_x = zone_right - (zone_width / 4)` (quarter from right, not at edge)
+- For mid-span zone: `text_x = zone_left + zone_width / 2` (center of zone)
+- Example: d8@100 zone from x=0 to x=1500 → label at x=375, y=y_top+200
+
+**For POSITION BAR labels** (e.g., "Pos 1  4d20"):
+- Place inside the span: `text_x = SPAN/4` (for bottom bars), `SPAN*3/4` (for top bars)
+- Never use x < 200 or x > SPAN - 200 (stay within interior of span)
+
+**Result**: all labels stay within the interior of the view bounding box and won't extend past the drawing border.
+
+## SECTION TITLES: Place ABOVE the View, Not Below
+
+Section view titles must be placed ABOVE the cross-section geometry to avoid collision with notes, material spec, and schedule in the lower sheet area:
+
+```python
+title = Draft.make_text(
+    ["SECTION A-A", "Scale 1:20"],
+    V(cx, geometry_top + 100, 0))  # 100mm above top of concrete outline
+title.Label = "CS_Title"
+```
+
+**NEVER place section titles below the geometry** (below the X axis of the view origin), because the lower sheet area is occupied by notes, material spec, and the schedule table. Placing titles ABOVE the view ensures they don't collide with lower-zone elements.
+
 ## BAR SCHEDULE: Every Position Must Appear
 The bar bending schedule MUST include EVERY position declared in the drawing geometry.
 - If code draws Pos 1 (d20 bars), Pos 2 (d12 bars), Pos 3 (d8 stirrups) — the schedule must have 3 data rows
@@ -404,12 +434,24 @@ Every position in the bar schedule must have a companion shape diagram:
 - Include total bar length, hook extensions, position number, and shape code if applicable
 - Group all shape diagrams together and display at smaller scale (1:5 or 1:10) beside the bar schedule
 
-**DIMENSION RULES (CRITICAL):**
-- **PRIMARY DIMENSION MUST BE THE ACTUAL CUT LENGTH** — the same number as in the BBS Length column
-- Do NOT dimension the diagram's display width — the diagram is drawn at a scaled size but dimensions must show fabrication values
-- For Type 11 (straight bar with equal hooks at both ends): dimension the total length (e.g., "6170mm"), then separately dimension each hook extension (e.g., "Hook = 120mm (10d)") using `make_linear_dimension`
-- For Type 51 (stirrups): show inner width and inner height as main dimensions, then separately dimension the hook extension (e.g., "Hook = 80mm (10d)")
-- Label text must include: "Pos X  dY  L=Zmm  Hook=Wmm"
+**DIMENSION RULES (STRICT):**
+
+**FORBIDDEN**: Any `make_linear_dimension` that measures the diagram's DRAWING WIDTH.
+The shape diagram is drawn at a compressed scale (e.g., 6170mm bar drawn as ~2000mm for display).
+Never add a dimension showing the display width (e.g., "2000mm") — a fabricator has no use for "2000mm" when the bar is actually 6170mm.
+
+**ONLY ALLOWED dimensions on shape diagrams:**
+1. `make_text` label with actual cut length: "L = 6170mm" or "Pos 2  d12  L=6170mm  Hook=120mm"
+2. `make_linear_dimension` ONLY for hook extensions: from bar end (inner face) to hook tip
+   - Shows the actual hook length (e.g., 120mm), NOT the drawn hook height
+3. For stirrups: inner width dimension, inner height dimension, and hook extension dimension
+   - All showing ACTUAL internal dimensions, NOT diagram drawing widths
+
+**Examples:**
+- ✓ CORRECT: Text "Pos 2  d12  L = 6170mm  Hook = 120mm (10d)" + one dimension line for hook = 120mm
+- ✓ CORRECT: Stirrup with dimensions: inner_width=230mm, inner_height=430mm, hook_extension=100mm
+- ✗ FORBIDDEN: Dimension showing the drawn bar width (2000mm — the display scale, not real bar length)
+- ✗ FORBIDDEN: Dimension showing the drawn hook height (not the actual hook extension)
 
 See rebar_conventions.md for complete code patterns (Type 11 hooks, Type 51 stirrups)
 
