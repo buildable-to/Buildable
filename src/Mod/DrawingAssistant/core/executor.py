@@ -38,6 +38,19 @@ _tracked_doc_name: Optional[str] = None
 # ============================================================
 
 ELEMENT_REQUIREMENTS = {
+    "beam_complete": {
+        "mandatory": [
+            "rebar_geometry",
+            "stirrups",
+            "cross_section",
+            "longitudinal_section",
+            "bar_schedule",
+            "material_spec",
+            "dimensions",
+            "span_dimension",
+        ],
+        "description": "Complete beam drawing with cross-section + longitudinal elevation (both views on same sheet)",
+    },
     "beam_section": {
         "mandatory": [
             "rebar_geometry",
@@ -46,12 +59,21 @@ ELEMENT_REQUIREMENTS = {
             "bar_schedule",
             "material_spec",
             "dimensions",
+            "span_dimension",
         ],
-        "description": "Beam reinforcement section drawing",
+        "description": "Beam reinforcement section drawing (cross-section perpendicular to span)",
     },
     "beam_elevation": {
-        "mandatory": ["rebar_geometry", "stirrups", "bar_schedule", "material_spec", "dimensions"],
-        "description": "Beam elevation/longitudinal reinforcement drawing",
+        "mandatory": [
+            "rebar_geometry",
+            "stirrups",
+            "longitudinal_section",
+            "bar_schedule",
+            "material_spec",
+            "dimensions",
+            "span_dimension",
+        ],
+        "description": "Beam elevation drawing (longitudinal section along span)",
     },
     "slab_section": {
         "mandatory": [
@@ -60,6 +82,7 @@ ELEMENT_REQUIREMENTS = {
             "bar_schedule",
             "material_spec",
             "dimensions",
+            "span_dimension",
         ],
         "description": "Slab reinforcement section drawing",
     },

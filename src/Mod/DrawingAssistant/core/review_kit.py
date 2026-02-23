@@ -329,12 +329,34 @@ def _check_doc_completeness() -> List[str]:
             "_TD.svg" in getattr(obj, "Template", "") for obj in templates
         )
 
+        # Check for longitudinal section (elevation view with bars/stirrups along span)
+        has_longitudinal = any(
+            "longitudinal" in l or "elevation" in l or "span_section" in l
+            or "section_bb" in l or "long_" in l
+            for l in all_labels
+        )
+
+        # Check bar schedule has multiple data rows (not just header)
+        schedule_rows = 0
+        for obj in doc.Objects:
+            if obj.TypeId == "Spreadsheet::Sheet":
+                try:
+                    # Count non-empty rows below header (row 2 onwards)
+                    row = 2
+                    while obj.get(f"A{row}"):
+                        schedule_rows += 1
+                        row += 1
+                except Exception:
+                    pass
+
         checks = [
             f"Bar bending schedule (Spreadsheet): {'✓ PRESENT' if has_spreadsheet else '✗ MISSING'}",
             f"Schedule embedded in sheet (DrawViewSpreadsheet): {'✓ PRESENT' if has_view_ssheet else '✗ MISSING — use DrawViewSpreadsheet'}",
+            f"Schedule completeness: {'✓ ' + str(schedule_rows) + ' positions' if schedule_rows > 1 else ('✗ only 1 row — add ALL bar positions' if schedule_rows == 1 else '✗ no data rows')}",
             f"Material spec text: {'✓ PRESENT' if has_material else '✗ MISSING — add concrete/steel grade'}",
             f"Stirrups/links: {'✓ PRESENT' if has_stirrup else '? NOT DETECTED — verify if required'}",
             f"Dimension annotations: {'✓ PRESENT' if has_dimensions else '✗ MISSING'}",
+            f"Longitudinal/elevation section: {'✓ PRESENT' if has_longitudinal else '? NOT DETECTED — beam drawings need longitudinal section'}",
             f"Title block template (_TD.svg): {'✓ PRESENT' if has_title_block else '~ BLANK template — consider _TD.svg for production'}",
         ]
 

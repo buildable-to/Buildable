@@ -270,6 +270,26 @@ For the completeness validation system to detect required drawing elements, use 
 - **Bar bending schedule**: Spreadsheet name should contain "Schedule" or "BBS" (e.g., "BarSchedule", "BBS_Slab")
 Example: `stirrup.Label = "Stirrup_Outer"` and `mat_spec.Label = "MaterialSpec"`
 
+## BEAM DRAWINGS: Both Views Required
+A complete beam drawing ALWAYS includes TWO companion views:
+1. **Cross-section** (perpendicular to span) — shows bar arrangement, stirrup layout, cover, depth
+2. **Longitudinal elevation** (along span) — shows bar distribution, stirrup spacing zones, span dimension, anchorage
+Use DRAWING_SPEC type: `beam_complete` and declare BOTH `cross_section` and `longitudinal_section` in the elements line.
+Place both views on the SAME TechDraw sheet if they fit (offset geometries by ≥15000mm in X within the page file).
+
+## BAR SCHEDULE: Every Position Must Appear
+The bar bending schedule MUST include EVERY position declared in the drawing geometry.
+- If code draws Pos 1 (d20 bars), Pos 2 (d12 bars), Pos 3 (d8 stirrups) — the schedule must have 3 data rows
+- A schedule showing only one position when multiple are drawn is INCOMPLETE and INCORRECT
+- Use `make_bar_schedule(doc, bars, name)` where `bars` = list of ALL bar positions as dicts
+- Never populate just the "primary" bar; include stirrups/links as Pos N in the schedule
+
+## STIRRUPS: 135° Hook per EN 1992-1-1 §8.5
+All stirrups and links MUST have a 135° hook (not 90°) per Eurocode ductility requirement.
+- In geometry: show a small angled extension at one corner of the stirrup rectangular frame
+- In labels: always annotate with hook angle, e.g., "Pos 3  d8@150 (135°)" or "d8@150 (135° hook)"
+- Why: 90° corners slip; 135° provides mechanical anchorage against pullout
+
 ## Important gotchas
 - Object `.Name` is read-only after creation — set only via `doc.addObject("Type", "DesiredName")`
 - Use `.Label` for human-readable identification (can be changed anytime)

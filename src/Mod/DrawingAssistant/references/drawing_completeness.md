@@ -60,34 +60,42 @@ A structurally complete drawing is construction-ready. Incomplete drawings cause
 
 ## Per Element Type: Mandatory Elements
 
-### Beam Section (Longitudinal)
+### Beam Section (Cross-section)
 **MANDATORY:**
 - Main rebar geometry (bottom + top bars, double-line + hooks)
 - Shear reinforcement (stirrups d8/d10/d12 at specified spacing)
-- Cross-section view showing stirrup arrangement
-- Cover dimensions (top and bottom)
-- Overall dimensions (span, depth)
-- Bar bending schedule
-- Material specification
-- Title block
+- Cover dimensions (top and bottom, AND side cover)
+- Overall dimensions (depth, width)
+- Section cut markers (A-A, B-B showing where this section is taken from)
+- **⚠️ NOTE**: A cross-section alone is NOT complete. Must include a companion longitudinal elevation.
 
-### Beam Elevation View
+### Beam Elevation (Longitudinal section)
 **MANDATORY:**
-- Main rebar showing full span (double-line bars with hooks)
-- Stirrup distribution along span (shown as vertical pairs at each stirrup position)
-- Section cut markers (A-A, B-B where sections are taken)
-- Overall dimensions (span, supports)
-- Bar bending schedule
-- Material specification
-- Title block
+- Longitudinal concrete outline (full span shown)
+- Main rebar shown along full span (bottom + top bars, double lines with hooks)
+- Stirrups shown as vertical pairs at each stirrup position along span
+- Stirrup spacing changes annotated (e.g., d8@100 at supports, d8@150 in mid-span)
+- **Span dimension** (overall length — REQUIRED, no calculation possible without it)
+- Bar curtailment marks and anchorage lengths at supports
+- Section cut markers (A-A, B-B showing where cross-sections are taken)
+- Bar bending schedule (shared with cross-section sheet)
+- Material specification (shared with cross-section sheet)
+- Title block (shared with cross-section sheet)
+
+**⚠️ COMPLETE BEAM = BOTH VIEWS REQUIRED:**
+A structurally complete beam drawing ALWAYS has two companion views:
+1. **Cross-section** (perpendicular to span) — shows bar arrangement and stirrup layout
+2. **Longitudinal elevation** (along span) — shows bar distribution, stirrup spacing zones, anchorage
+Place both on the same TechDraw sheet if they fit, offset by ≥15000mm in X within the page file.
 
 ### Slab Section (One Direction)
 **MANDATORY:**
 - Bottom main reinforcement (running along section) as double lines
 - Top reinforcement if cantilevered or two-way
 - Transverse reinforcement (the other direction) shown as dots
-- Cover dimensions (top and bottom)
-- Overall dimensions (span, thickness)
+- Cover dimensions (top, bottom, AND side cover)
+- **Span dimension** (overall length — REQUIRED, no bar lengths can be calculated without it)
+- Overall dimensions (thickness)
 - Bar bending schedule (both directions)
 - Material specification
 - Title block
@@ -133,6 +141,57 @@ A structurally complete drawing is construction-ready. Incomplete drawings cause
 - Finish specifications (concrete class, surface treatment)
 - Title block
 - Material specification (concrete grade only, no rebar)
+
+---
+
+## CRITICAL MANDATORY RULES
+
+### 1. BAR SCHEDULE: ALL POSITIONS REQUIRED
+
+The bar bending schedule MUST include EVERY position declared in the drawing geometry.
+
+**WRONG:** Schedule with only Pos 1 when geometry has Pos 1, 2, 3
+```
+| Pos | Ø (mm) | Shape | Length (mm) | Qty | Total Wt (kg) |
+|-----|--------|-------|-------------|-----|---------------|
+| 1   | 20     | Hook  | 3000        | 4   | 75.4          |
+```
+
+**CORRECT:** All positions listed
+```
+| Pos | Ø (mm) | Shape      | Length (mm) | Qty | Total Wt (kg) |
+|-----|--------|------------|-------------|-----|---------------|
+| 1   | 20     | Hook       | 3000        | 4   | 75.4          |
+| 2   | 12     | Straight   | 2800        | 2   | 20.1          |
+| 3   | 8      | Hook (135) | 500         | 12  | 18.8          |
+```
+
+**Impact of missing positions:** Contractor cannot order all bars, site confusion, incomplete steel delivery, work stoppage.
+
+### 2. SPAN DIMENSION: REQUIRED FOR BEAMS AND SLABS
+
+Without the overall span (or length), bar cut lengths CANNOT be calculated.
+
+For beams and slabs, ALWAYS dimension the span:
+- **Beams**: dimension along longitudinal elevation from support face to support face (or CL to CL)
+- **Slabs**: dimension each direction of main reinforcement
+
+This is the primary dimension — without it, the drawing is incomplete.
+
+### 3. STIRRUP HOOK: 135° per EN 1992-1-1 §8.5
+
+All stirrups and links MUST have a 135° hook bend, NOT a 90° closed corner.
+
+**In geometry:**
+- Show a small angled extension at one corner of the stirrup rectangular frame
+- The hook angle should be approximately 135° (not sharp 90°)
+
+**In labels:**
+Always annotate stirrup spacing with the hook angle:
+- ✗ WRONG: `Pos 3  d8@150`
+- ✓ CORRECT: `Pos 3  d8@150 (135°)` or `Pos 3  d8@150 (135° hook)`
+
+**Why:** EC2 hook is a ductility/pullout prevention requirement. A 90° corner can slip; 135° provides mechanical anchorage.
 
 ---
 
