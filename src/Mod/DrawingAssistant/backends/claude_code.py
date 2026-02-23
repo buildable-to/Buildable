@@ -283,16 +283,15 @@ The bar bending schedule MUST include EVERY position declared in the drawing geo
 - If code draws Pos 1 (d20 bars), Pos 2 (d12 bars), Pos 3 (d8 stirrups) — the schedule must have 3 data rows
 - A schedule showing only one position when multiple are drawn is INCOMPLETE and INCORRECT
 - **CRITICAL: Stirrups/links are ALSO bar positions.** They must appear in the schedule as a row.
-- Use `make_bar_schedule(doc, bars, name)` where `bars` = list of ALL bar positions (including stirrups) as dicts:
-  ```python
-  bars = [
-      {"pos": "1", "dia": 20, "shape": "Hook (Type 11)", "length_mm": 6400, "qty": 4},
-      {"pos": "2", "dia": 12, "shape": "Straight",       "length_mm": 6000, "qty": 2},
-      {"pos": "3", "dia": 8,  "shape": "Stirrup (135°)",  "length_mm": 1340, "qty": 38},
-  ]
-  ```
+- Use `make_bar_schedule(doc, bars, name)` where `bars` = list of ALL bar positions (including stirrups) as dicts with keys: position, dia, shape, length_mm, qty
+  - position: string like "1", "2", "3"
+  - dia: integer (bar diameter in mm)
+  - shape: string like "Hook", "Straight", "Stirrup"
+  - length_mm: float (total bar length in mm)
+  - qty: integer (quantity of bars)
 - Never populate just the "primary" bar; include stirrups/links as Pos N in the schedule
 - Count stirrups: approximately span / spacing + 1 (e.g., 6000mm / 150mm ≈ 41 stirrups)
+- See _engineering_base.py make_bar_schedule() helper for complete usage
 
 ## STIRRUPS: 135° Hook per EN 1992-1-1 §8.5
 All stirrups and links MUST have a 135° hook (not 90°) per Eurocode ductility requirement.
