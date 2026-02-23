@@ -76,10 +76,12 @@ A structurally complete drawing is construction-ready. Incomplete drawings cause
 - Stirrups shown as vertical pairs at each stirrup position along span
 - Stirrup spacing changes annotated (e.g., d8@100 at supports, d8@150 in mid-span)
 - **Span dimension** (overall length — REQUIRED, no calculation possible without it)
-- Bar curtailment marks and anchorage lengths at supports
+- **Anchorage at both supports** — bar extensions into columns/walls with Ld dimension and label (e.g., "Ld = 800mm = 40d")
 - Section cut markers (A-A, B-B showing where cross-sections are taken)
 - Bar bending schedule (shared with cross-section sheet)
 - Material specification (shared with cross-section sheet)
+- **Bar shape diagrams** — schematic shape for each bar position (Pos 1, 2, 3...) with bend profile and key dimensions
+- **General notes** — standard construction notes block (5-7 items: dimensions in mm, cutting/bending per EN, lap lengths, cover spacers, etc.)
 - Title block (shared with cross-section sheet)
 
 **⚠️ COMPLETE BEAM = BOTH VIEWS REQUIRED:**
@@ -293,10 +295,14 @@ Before responding "LOOKS_GOOD" in drawing review, verify:
 
 - [ ] Main reinforcement present with correct bar counts
 - [ ] Stirrups/links clearly shown (for beams/columns)
-- [ ] Cover dimensions dimensioned on drawing
-- [ ] Overall width/height dimensions present
+- [ ] Cover dimensions dimensioned on at least TWO edges (top/bottom AND side)
+- [ ] **Anchorage shown and dimensioned at support ends** (Ld = Xmm = Xd)
+- [ ] Overall width/height/span dimensions present
 - [ ] Bar bending schedule visible in sheet (DrawViewSpreadsheet embedded)
+- [ ] **Bar schedule includes ALL positions** (Pos 1, 2, 3...) — not just primary bar
+- [ ] **Bar shape diagram present for each position** — small bent-shape sketch with dimensions
 - [ ] Material spec text block readable (concrete grade, steel grade, cover, exposure visible)
+- [ ] **General notes block present** (at least 5 standard notes: dims in mm, bending per EN, lap length, spacers, etc.)
 - [ ] Section titles present (e.g., "SECTION A-A, Scale 1:20")
 - [ ] Title block template used (_TD.svg, not blank)
 - [ ] Title block fields populated (title, drawing number, scale, date)

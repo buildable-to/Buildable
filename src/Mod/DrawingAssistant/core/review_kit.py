@@ -349,10 +349,28 @@ def _check_doc_completeness() -> List[str]:
                 except Exception:
                     pass
 
+        # Check for anchorage geometry (labels containing "anc", "anchorage", "ld")
+        has_anchorage = any(
+            "anc" in l or "anchorage" in l or "_ld" in l or "ld_" in l
+            for l in all_labels
+        )
+
+        # Check for bar shape diagrams (labels containing "shape", "bbs_shape", "barshape")
+        has_shapes = any(
+            "shape_" in l or "barshape" in l or "_shape" in l or "bbs_shape" in l
+            for l in all_labels
+        )
+
+        # Check for general notes
+        has_notes = any("generalnotes" in l or "general_notes" in l for l in all_labels)
+
         checks = [
             f"Bar bending schedule (Spreadsheet): {'✓ PRESENT' if has_spreadsheet else '✗ MISSING'}",
             f"Schedule embedded in sheet (DrawViewSpreadsheet): {'✓ PRESENT' if has_view_ssheet else '✗ MISSING — use DrawViewSpreadsheet'}",
             f"Schedule completeness: {'✓ ' + str(schedule_rows) + ' positions' if schedule_rows > 1 else ('✗ only 1 row — add ALL bar positions' if schedule_rows == 1 else '✗ no data rows')}",
+            f"Anchorage at supports: {'✓ PRESENT' if has_anchorage else '✗ MISSING — bottom bars must show Ld into supports'}",
+            f"Bar shape diagrams: {'✓ PRESENT' if has_shapes else '✗ MISSING — add shape sketch per position'}",
+            f"General notes: {'✓ PRESENT' if has_notes else '✗ MISSING — add general notes text block'}",
             f"Material spec text: {'✓ PRESENT' if has_material else '✗ MISSING — add concrete/steel grade'}",
             f"Stirrups/links: {'✓ PRESENT' if has_stirrup else '? NOT DETECTED — verify if required'}",
             f"Dimension annotations: {'✓ PRESENT' if has_dimensions else '✗ MISSING'}",

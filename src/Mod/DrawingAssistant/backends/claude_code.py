@@ -261,6 +261,7 @@ Pre-built functions for common drawing elements. Use these for stirrups, bar sch
 - `make_stirrups_elevation(doc, draft_objects, x_start, x_end, y_bot, y_top, bar_d, spacing, cover)` — stirrup vertical legs in elevation view
 - `make_bar_schedule(doc, bars, name)` — bar bending schedule Spreadsheet (returns object, embed in TechDraw with DrawViewSpreadsheet)
 - `make_material_spec(doc, draft_objects, ox, oy, concrete, steel, cover_nom, exposure, standard)` — material specification text block
+- `make_general_notes(doc, draft_objects, ox, oy, beam_type)` — standard general notes text block (7 items: dimensions, lap length, cutting/bending, aggregate, spacers, vibration, approval)
 - Eurocode constants: `COVER_XC1` through `COVER_XS`, `min_bend_diameter(d)`, `hook_extension(d)`
 
 ## Required Object Naming Conventions
@@ -281,14 +282,40 @@ Place both views on the SAME TechDraw sheet if they fit (offset geometries by �
 The bar bending schedule MUST include EVERY position declared in the drawing geometry.
 - If code draws Pos 1 (d20 bars), Pos 2 (d12 bars), Pos 3 (d8 stirrups) — the schedule must have 3 data rows
 - A schedule showing only one position when multiple are drawn is INCOMPLETE and INCORRECT
-- Use `make_bar_schedule(doc, bars, name)` where `bars` = list of ALL bar positions as dicts
+- **CRITICAL: Stirrups/links are ALSO bar positions.** They must appear in the schedule as a row.
+- Use `make_bar_schedule(doc, bars, name)` where `bars` = list of ALL bar positions (including stirrups) as dicts:
+  ```python
+  bars = [
+      {"pos": "1", "dia": 20, "shape": "Hook (Type 11)", "length_mm": 6400, "qty": 4},
+      {"pos": "2", "dia": 12, "shape": "Straight",       "length_mm": 6000, "qty": 2},
+      {"pos": "3", "dia": 8,  "shape": "Stirrup (135°)",  "length_mm": 1340, "qty": 38},
+  ]
+  ```
 - Never populate just the "primary" bar; include stirrups/links as Pos N in the schedule
+- Count stirrups: approximately span / spacing + 1 (e.g., 6000mm / 150mm ≈ 41 stirrups)
 
 ## STIRRUPS: 135° Hook per EN 1992-1-1 §8.5
 All stirrups and links MUST have a 135° hook (not 90°) per Eurocode ductility requirement.
 - In geometry: show a small angled extension at one corner of the stirrup rectangular frame
 - In labels: always annotate with hook angle, e.g., "Pos 3  d8@150 (135°)" or "d8@150 (135° hook)"
 - Why: 90° corners slip; 135° provides mechanical anchorage against pullout
+
+## ANCHORAGE AT SUPPORTS: REQUIRED for all beam bottom bars
+Bottom longitudinal bars must show anchorage length extending into the support (wall, column, bearing pad):
+- Ld = 40d (straight bar) or Ld = 28d (with standard hook)
+- Example: d20 in C30/37 → Ld = 40×20 = 800mm (straight) or 560mm (hook)
+- Draw on beam elevation as: bar continues past span face → Ld dimension + label
+- Show on BOTH ends of the beam span. Top bars only at continuous/cantilever supports.
+- Label format: "Ld = 800mm = 40d" or "Ld = 560mm = 28d (hook)"
+- See rebar_conventions.md for complete geometry code pattern
+
+## BAR SHAPE DIAGRAMS: Required for complete drawings
+Every position in the bar schedule must have a companion shape diagram:
+- Draw small schematic outlines showing the bar's bent profile with critical dimensions
+- Include total bar length, hook extensions, position number, and shape code if applicable
+- Group all shape diagrams together and display at smaller scale (1:5 or 1:10) beside the bar schedule
+- Label each shape with Pos number, diameter, and total length
+- See rebar_conventions.md for complete code patterns (Type 11 hooks, Type 51 stirrups)
 
 ## Important gotchas
 - Object `.Name` is read-only after creation — set only via `doc.addObject("Type", "DesiredName")`
@@ -468,6 +495,35 @@ def make_material_spec(doc, draft_objects, ox, oy,
     ]
     txt = Draft.make_text(lines, V(ox, oy, 0))
     txt.Label = "MaterialSpec"
+    draft_objects.append(txt)
+    return txt
+
+# ============================================================
+# GENERAL NOTES TEXT BLOCK
+# ============================================================
+
+def make_general_notes(doc, draft_objects, ox, oy, beam_type="simply_supported"):
+    """Create standard general notes text block for construction drawings.
+
+    Args:
+        doc: FreeCAD document
+        draft_objects: list to append to
+        ox, oy: bottom-left position in Draft model space (mm)
+        beam_type: "simply_supported" or "continuous" (affects lap length guidance)
+    """
+    lap_rule = "50d" if beam_type == "simply_supported" else "60d"
+    lines = [
+        "GENERAL NOTES",
+        "1. All dimensions in millimeters unless noted otherwise.",
+        f"2. Minimum lap length = {lap_rule} (Exposure class XC2).",
+        "3. Reinforcement to be cut and bent per EN 10221.",
+        "4. Maximum aggregate size = 20mm.",
+        "5. Maintain nominal cover with approved plastic spacers.",
+        "6. Concrete vibrated during placing, not re-vibrated.",
+        "7. Obtain written approval before departing from drawing.",
+    ]
+    txt = Draft.make_text(lines, V(ox, oy, 0))
+    txt.Label = "GeneralNotes"
     draft_objects.append(txt)
     return txt
 '''

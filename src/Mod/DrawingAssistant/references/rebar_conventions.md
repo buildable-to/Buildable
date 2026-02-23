@@ -327,6 +327,192 @@ For slabs, stirrups don't apply. Instead, show the **transverse (perpendicular) 
 
 ---
 
+## Anchorage at Supports (MANDATORY for beam longitudinal bars)
+
+Bars cannot just end at the concrete face — they must extend into the support (wall, column, or bearing pad) to develop full tensile capacity. The anchorage length (Ld) depends on concrete strength, steel grade, and bar diameter.
+
+### Anchorage length values (EC2 simplified)
+
+For B500B reinforcing steel in typical concrete grades:
+
+| Concrete | d20 straight | d20 with hook | d16 straight | d16 with hook |
+|----------|--------------|---------------|--------------|---------------|
+| C25/30   | 880mm (44d) | 616mm (31d)   | 704mm (44d)  | 493mm (31d)   |
+| C30/37   | 760mm (38d) | 532mm (27d)   | 608mm (38d)  | 426mm (27d)   |
+| C35/45   | 680mm (34d) | 476mm (24d)   | 544mm (34d)  | 381mm (24d)   |
+
+**Rule of thumb:** Ld = 40d (straight), Ld = 28d (with standard hook). The hook reduces required anchorage by ~30%.
+
+### Geometry pattern
+
+Show anchorage on the beam elevation (longitudinal section). The bar extends BEYOND the span face by Ld into the support column or wall:
+
+```python
+# Example: bottom bar (Pos 1, d20) anchorage into right support
+Ld = 40 * DA  # = 40 * 20 = 800mm for d20 straight bar
+
+# Bar extension past span end (shown as single or dashed line)
+anc_line = Draft.make_wire([
+    V(OX + SPAN, yA, 0),          # right edge of beam section
+    V(OX + SPAN + Ld, yA, 0),     # bar continues Ld into support
+], closed=False)
+anc_line.Label = "Anc_Pos1_Right"
+draft_objects.append(anc_line)
+
+# Dimension the anchorage length
+anc_dim = Draft.make_linear_dimension(
+    V(OX + SPAN, yA, 0),
+    V(OX + SPAN + Ld, yA, 0),
+    V(OX + SPAN + Ld/2, yA - 300, 0))  # dimension line below
+anc_dim.Label = "Dim_Anc_Right"
+draft_objects.append(anc_dim)
+
+# Label: "Ld = 800mm = 40d"
+anc_txt = Draft.make_text([f"Ld = {Ld}mm = 40d"],
+    V(OX + SPAN + Ld/2, yA - 600, 0))
+anc_txt.Label = "AncLabel_Right"
+draft_objects.append(anc_txt)
+
+# Repeat for left support (same Ld value)
+```
+
+### Where to show anchorage
+
+- **Bottom bars** (Pos 1): show on BOTH ends of the beam elevation
+- **Top bars** (Pos 2): show only at continuous supports (where negative bending exists); omit at simple supports
+- **Simply supported beam**: bottom bars only, both ends. Top bars don't need anchorage.
+- **Continuous or cantilever**: all longitudinal bars need anchorage at every support face
+
+---
+
+## Bar Shape Diagrams (MANDATORY for production drawings)
+
+Every position in the bar bending schedule must have a companion shape diagram — a small schematic showing the bar's bent profile with critical dimensions. Fabricators read these diagrams to understand how to bend each bar.
+
+### Components of a shape diagram
+
+Each shape diagram shows:
+1. **Bar outline** — polyline showing the bent shape
+2. **Total length** — labeled on the straight section
+3. **Hook extensions** — labeled with length (Lh = 10d typically)
+4. **Position number** — e.g. "Pos 1", "Pos 3"
+5. **Shape code** (optional) — ISO/EN standard shape code (e.g. "Type 11")
+
+### Common shape patterns
+
+#### Type 11 — Straight bar with 180° hooks (bottom bars with hooks)
+
+```python
+# Shape diagram for Pos 1: d20 hook bars, total length 6400mm
+ox, oy = 1000, 500  # position in Draft space
+DA = 20
+bar_len = 6400
+hook = 200  # 10*DA = 10*20 = 200mm (standard)
+
+# Outline: left hook (up) → straight section → right hook (up)
+shp = Draft.make_wire([
+    V(ox, oy + hook, 0),           # left hook tip
+    V(ox, oy, 0),                  # left corner (where straight begins)
+    V(ox + bar_len, oy, 0),        # straight section centerline
+    V(ox + bar_len, oy + hook, 0), # right hook tip
+], closed=False)
+shp.Label = "Shape_Pos1_Outline"
+draft_objects.append(shp)
+
+# Dimension: total bar length
+dim_total = Draft.make_linear_dimension(
+    V(ox, oy - 100, 0), V(ox + bar_len, oy - 100, 0),
+    V(ox + bar_len/2, oy - 400, 0))
+dim_total.Label = "Shape_Pos1_Length"
+draft_objects.append(dim_total)
+
+# Label: "Pos 1  6400mm" or "Pos 1  d20 Hook"
+lbl = Draft.make_text(["Pos 1", "d20", f"{bar_len}mm"], V(ox + bar_len/2 - 200, oy + hook + 200, 0))
+lbl.Label = "Shape_Pos1_Label"
+draft_objects.append(lbl)
+```
+
+#### Type 51 — Stirrup/link with 135° hook
+
+```python
+# Shape diagram for Pos 3: d8 stirrups, inner dimensions (b-2r)×(h-2r)
+ox, oy = 1000, 1200  # below the Type 11 diagram
+DS = 8
+r = DS / 2
+inner_w = 280  # calculated from concrete width - 2*cover - DS
+inner_h = 450  # calculated from concrete depth - 2*cover - DS
+hook_ext = 100  # 10*DS = 80mm, draw a bit more for visibility
+
+# Outer rectangle (outer face of stirrup bar)
+shp_outer = Draft.make_wire([
+    V(ox, oy, 0),
+    V(ox + inner_w + 2*r, oy, 0),
+    V(ox + inner_w + 2*r, oy + inner_h + 2*r, 0),
+    V(ox, oy + inner_h + 2*r, 0),
+], closed=True)
+shp_outer.Label = "Shape_Stirrup_Outer"
+draft_objects.append(shp_outer)
+
+# Inner rectangle (inner face of stirrup bar)
+shp_inner = Draft.make_wire([
+    V(ox + r, oy + r, 0),
+    V(ox + inner_w + r, oy + r, 0),
+    V(ox + inner_w + r, oy + inner_h + r, 0),
+    V(ox + r, oy + inner_h + r, 0),
+], closed=True)
+shp_inner.Label = "Shape_Stirrup_Inner"
+draft_objects.append(shp_inner)
+
+# 135° hook at one corner (upper-left, drawn at 45° angle)
+import math
+hx = hook_ext * math.cos(math.radians(45))  # 70.7mm
+hy = hook_ext * math.sin(math.radians(45))
+hook_line = Draft.make_wire([
+    V(ox, oy + inner_h + 2*r, 0),  # corner start
+    V(ox - hx, oy + inner_h + 2*r + hy, 0),  # 135° extension (upper-left)
+], closed=False)
+hook_line.Label = "Shape_Stirrup_Hook"
+draft_objects.append(hook_line)
+
+# Dimension: inner width × height
+dim_w = Draft.make_linear_dimension(
+    V(ox, oy - 100, 0), V(ox + inner_w + 2*r, oy - 100, 0),
+    V(ox + (inner_w + 2*r)/2, oy - 300, 0))
+dim_h = Draft.make_linear_dimension(
+    V(ox + inner_w + 3*r, oy, 0), V(ox + inner_w + 3*r, oy + inner_h + 2*r, 0),
+    V(ox + inner_w + 5*r, oy + (inner_h + 2*r)/2, 0))
+dim_w.Label = "Shape_Stirrup_W"
+dim_h.Label = "Shape_Stirrup_H"
+draft_objects.append(dim_w)
+draft_objects.append(dim_h)
+
+# Label: "Pos 3  d8@150 (135°)"
+lbl = Draft.make_text(["Pos 3", "d8 Stirrup", "(135° hook)"],
+    V(ox + (inner_w + 2*r)/2 - 100, oy + inner_h + 3*r + 200, 0))
+lbl.Label = "Shape_Stirrup_Label"
+draft_objects.append(lbl)
+```
+
+### Grouping and placement
+
+Group all shape diagrams together and create a separate DrawViewDraft view at smaller scale (1:5 or 1:10) placed beside or below the bar bending schedule on the TechDraw sheet:
+
+```python
+shapes_objects = [...]  # all shape wires, dimensions, labels
+shapes_grp = doc.addObject("App::DocumentObjectGroup", "BarShapes_Group")
+shapes_grp.Group = shapes_objects
+
+# In TechDraw page setup:
+shapes_view = doc.addObject("TechDraw::DrawViewDraft", "ShapesView")
+shapes_view.Source = shapes_grp
+shapes_view.Scale = 0.1  # 1:10
+page.addView(shapes_view)
+shapes_view.X = 20   # right side of schedule
+shapes_view.Y = 80
+```
+
+---
+
 ## Quick Reference
 
 | Bar d (mm) | Half-d (r) | Hook length (10d) | Bend radius |
