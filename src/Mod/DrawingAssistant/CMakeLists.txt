@@ -49,7 +49,7 @@ SET(DrawingAssistant_widgets
     widgets/preview.py
     widgets/plan.py
     widgets/step_preview.py
-    widgets/context_selection.py
+    widgets/project_context.py
     widgets/progress_indicator.py
     widgets/activity.py
 )

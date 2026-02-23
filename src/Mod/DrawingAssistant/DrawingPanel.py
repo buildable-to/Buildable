@@ -24,11 +24,11 @@ from .core import snapshot as SnapshotManager
 from .core import changes as ChangeDetector
 from .core import source as SourceManager
 from .core.preview import PreviewManager, SandboxReviewSession
-from .core.review_kit import ReviewKit, generate_review_kit, format_review_prompt
+from .core.review_kit import ReviewKit, generate_review_kit, format_review_prompt, list_available_screenshots
 from .persistence import activity as ActivityLogger
 from .persistence.session import SessionManager
 from .widgets.chat import ChatWidget
-from .widgets.context_selection import ContextSelectionWidget
+from .widgets.project_context import ProjectContextWidget
 
 
 # Maximum attempts to auto-fix code that fails preview
@@ -196,6 +196,10 @@ class DrawingAssistantDockWidget(QtWidgets.QDockWidget):
         # Ensure CLAUDE.md exists for Claude Code backend
         self._ensure_claude_md()
 
+        # Load project context (notes + reference docs)
+        if self._project_dir:
+            self._project_context.set_project_dir(self._project_dir)
+
         # Log panel opened
         ActivityLogger.log_panel_opened()
 
@@ -271,6 +275,32 @@ class DrawingAssistantDockWidget(QtWidgets.QDockWidget):
             }}
         """
 
+        # Context toggle button
+        self._context_btn = QtWidgets.QToolButton()
+        self._context_btn.setText("Context")
+        self._context_btn.setToolTip("Project notes and reference documents")
+        self._context_btn.setCheckable(True)
+        self._context_btn.setStyleSheet(f"""
+            QToolButton {{
+                color: {Theme.COLORS['text_secondary']};
+                background: transparent;
+                border: none;
+                font-size: {Theme.FONTS['size_sm']};
+                padding: 6px 10px;
+                border-radius: {Theme.RADIUS['xs']};
+            }}
+            QToolButton:hover {{
+                color: {Theme.COLORS['text_primary']};
+                background-color: {Theme.COLORS['bg_hover']};
+            }}
+            QToolButton:checked {{
+                color: {Theme.COLORS['accent_primary']};
+                background-color: {Theme.COLORS['bg_tertiary']};
+            }}
+        """)
+        self._context_btn.toggled.connect(self._on_context_toggled)
+        header_layout.addWidget(self._context_btn)
+
         # Sessions button
         self.sessions_btn = QtWidgets.QToolButton()
         self.sessions_btn.setText("Sessions")
@@ -301,13 +331,18 @@ class DrawingAssistantDockWidget(QtWidgets.QDockWidget):
 
         layout.addWidget(header)
 
-        # Context selection widget (above chat)
-        self._context_widget = ContextSelectionWidget()
-        layout.addWidget(self._context_widget)
+        # Stacked widget: swap between chat and context views
+        self._stack = QtWidgets.QStackedWidget()
+        self._stack.setStyleSheet("background: transparent;")
 
-        # Chat widget
         self._chat = ChatWidget()
-        layout.addWidget(self._chat, stretch=1)
+        self._stack.addWidget(self._chat)  # index 0 = drawing (chat)
+
+        self._project_context = ProjectContextWidget()
+        self._stack.addWidget(self._project_context)  # index 1 = context
+
+        self._stack.setCurrentIndex(0)
+        layout.addWidget(self._stack, stretch=1)
 
         self.setWidget(main)
         self.setMinimumWidth(380)
@@ -691,8 +726,7 @@ class DrawingAssistantDockWidget(QtWidgets.QDockWidget):
         # Build context if enabled
         context = ""
         if self.context_action.isChecked():
-            objects_filter = self._context_widget.get_context_objects()
-            context = ContextBuilder.build_context(objects_filter=objects_filter)
+            context = ContextBuilder.build_context(objects_filter=None)
 
         # Append warnings from last execution to context
         if self._last_execution_warnings:
@@ -951,6 +985,9 @@ Format:
             f"New pages length: {len(new_source) if new_source else 0}\n"
         )
 
+        # For sandbox execution, use version with SHEET_Y_OFFSET injected
+        new_source_for_exec = SourceManager.read_all_pages_for_execution()
+
         # If no backup or no change, just show the text response
         if old_source is None or old_source == new_source:
             FreeCAD.Console.PrintMessage("DrawingAssistant: No page changes detected\n")
@@ -966,7 +1003,7 @@ Format:
         FreeCAD.Console.PrintMessage(
             f"DrawingAssistant: Creating sandbox for review (attempt {attempt})...\n"
         )
-        success, error_msg, session = self._preview_manager.create_sandbox_for_review(new_source)
+        success, error_msg, session = self._preview_manager.create_sandbox_for_review(new_source_for_exec)
 
         # Capture warnings from sandbox execution
         sandbox_warnings = self._preview_manager.get_last_warnings()
@@ -984,7 +1021,7 @@ Format:
             ActivityLogger.log_preview_created(len(session.object_shapes), False)
 
             # Check if self-review is enabled
-            if self._context_widget.show_review_feedback():
+            if self.self_review_action.isChecked():
                 self._run_sandbox_self_review()
             else:
                 self._finalize_sandbox_preview()
@@ -1448,11 +1485,17 @@ Read the relevant page file to understand what went wrong, then fix it."""
         pages_dir = SourceManager.get_pages_dir()
         helper_paths = SourceManager.list_helper_pages()
 
+        # Build sheet index lookup for SHEET_Y_OFFSET
+        all_pages = SourceManager.list_pages()
+        non_helpers = [p.name for p in all_pages if not p.name.startswith("_")]
+        sheet_index_map = {name: i for i, name in enumerate(non_helpers)}
+
         all_warnings = []
         for filename in sorted(modified + added, key=SourceManager.page_sort_key_str):
             page_path = pages_dir / filename
+            sheet_idx = sheet_index_map.get(filename, 0)
             success, msg, warnings, new_objs = CodeExecutor.execute_single_page(
-                page_path, helper_paths
+                page_path, helper_paths, sheet_index=sheet_idx
             )
             all_warnings.extend(warnings)
             if not success:
@@ -1528,8 +1571,7 @@ Read the relevant page file to understand what went wrong, then fix it."""
 
         context = ""
         if self.context_action.isChecked():
-            objects_filter = self._context_widget.get_context_objects()
-            context = ContextBuilder.build_context(objects_filter=objects_filter)
+            context = ContextBuilder.build_context(objects_filter=None)
 
         if self._last_execution_warnings:
             warnings_text = "\n".join(self._last_execution_warnings)
@@ -1603,6 +1645,15 @@ Now implement this plan by editing the page files in pages/. Follow the same rul
             import AIAssistant
             AIAssistant.show()
 
+    def _on_context_toggled(self, checked: bool):
+        """Toggle between chat and project context views."""
+        if checked:
+            self._update_project_dir()
+        else:
+            # Flush any pending note changes before leaving context view
+            self._project_context.flush_notes()
+        self._stack.setCurrentIndex(1 if checked else 0)
+
     def _on_clear(self):
         """Clear the chat UI."""
         self._chat.clear_chat()
@@ -1642,6 +1693,7 @@ Now implement this plan by editing the page files in pages/. Follow the same rul
                     f"DrawingAssistant: Project directory updated to {new_dir}\n"
                 )
             self._ensure_claude_md()
+            self._project_context.set_project_dir(new_dir)
 
     def _prompt_save_document(self):
         """Prompt user to save the document before using Drawing Assistant."""
@@ -1707,16 +1759,28 @@ Now implement this plan by editing the page files in pages/. Follow the same rul
     # =========================================================================
 
     def _get_top_view_screenshots(self) -> list:
-        """Return the top view screenshot path as a list (for LLMWorker compat)."""
-        if self._last_review_kit and self._last_review_kit.top_view_path:
-            return [self._last_review_kit.top_view_path]
-        return []
+        """Return persisted group screenshot paths (for LLMWorker compat).
+
+        Scans screenshots/ subdirectories for all group PNGs so the
+        inner Claude can see the current drawing state on each turn.
+        """
+        if not self._project_dir:
+            return []
+        available = list_available_screenshots(self._project_dir)
+        paths = []
+        for sheet_groups in available.values():
+            paths.extend(sheet_groups.values())
+        return paths
 
     def _generate_and_maybe_review(self, change_set):
         """Generate review kit and optionally run on-demand self-review."""
         if self._project_dir:
+            page_map = CodeExecutor.get_page_object_map()
+            edited = getattr(self.llm, "edited_files", [])
             self._last_review_kit = generate_review_kit(
-                change_set, self._project_dir
+                change_set, self._project_dir,
+                page_object_map=page_map,
+                changed_files=edited if edited else None,
             )
         else:
             self._last_review_kit = None
@@ -1796,8 +1860,12 @@ Now implement this plan by editing the page files in pages/. Follow the same rul
 
                 # Regenerate review kit for next iteration
                 if self._project_dir:
+                    page_map = CodeExecutor.get_page_object_map()
+                    edited = getattr(self.llm, "edited_files", [])
                     self._last_review_kit = generate_review_kit(
-                        change_set, self._project_dir
+                        change_set, self._project_dir,
+                        page_object_map=page_map,
+                        changed_files=edited if edited else None,
                     )
 
                 self._run_on_demand_review(change_set)
@@ -1873,7 +1941,11 @@ Now implement this plan by editing the page files in pages/. Follow the same rul
             if main_doc_name and FreeCAD.getDocument(main_doc_name):
                 FreeCAD.setActiveDocument(main_doc_name)
 
-            kit = generate_review_kit(sandbox_change_set, self._project_dir)
+            # Sandbox: capture ALL groups (no page_object_map for sandbox doc)
+            kit = generate_review_kit(
+                sandbox_change_set, self._project_dir,
+                page_object_map=None, changed_files=None,
+            )
             review_prompt = format_review_prompt(kit)
         else:
             review_prompt = "Review the current drawing state. Respond with LOOKS_GOOD if correct or explain issues."
@@ -1912,7 +1984,7 @@ Now implement this plan by editing the page files in pages/. Follow the same rul
                 "DrawingAssistant: Claude edited pages during sandbox review, re-executing...\n"
             )
 
-            new_source = SourceManager.read_all_pages()
+            new_source = SourceManager.read_all_pages_for_execution()
             success, error_msg = self._preview_manager.re_execute_in_sandbox(
                 self._sandbox_session, new_source
             )

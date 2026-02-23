@@ -1,21 +1,27 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 """
-Review Kit - Generates on-demand review files for AI self-review.
+Review Kit - Generates per-group screenshots and inspection data for AI review.
 
-After code execution, produces a "review kit" of files on disk:
-- Top-down view screenshot (full scene)
-- Focused screenshots per changed object/group
-- inspection.json with serialized object properties
+After code execution, captures a screenshot per App::DocumentObjectGroup,
+organized by sheet file:
 
-Claude reads these on-demand via the Read tool during self-review,
-inspecting only what it needs rather than receiving all images upfront.
+    screenshots/
+    ├── 01_foundation/
+    │   ├── PlanGroup.png
+    │   ├── SectionAGroup.png
+    │   └── SectionBGroup.png
+    └── 02_reinforcement/
+        └── RebarSectionAGroup.png
+
+Screenshots persist across turns — only the changed sheet file's groups
+are recaptured.  Claude reads them on-demand via the Read tool.
 """
 
 import json
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Set
 
 import FreeCAD
 import FreeCADGui
@@ -25,15 +31,6 @@ from .changes import ChangeSet
 
 
 _SKIP_TYPES = ("App::Origin", "App::Plane", "App::Line", "App::Point")
-
-# Types to skip for focus screenshots (no useful 3D geometry to zoom into)
-_SKIP_FOCUS_TYPES = (
-    "TechDraw::DrawPage",
-    "TechDraw::DrawSVGTemplate",
-    "TechDraw::DrawViewPart",
-    "TechDraw::DrawViewDraft",
-    "TechDraw::DrawViewSpreadsheet",
-)
 
 # Properties that are internal/noise — never useful for drawing review
 _SKIP_PROPERTIES = frozenset({
@@ -54,60 +51,238 @@ _SKIP_PROPERTIES = frozenset({
 class ReviewKit:
     """Describes the generated review files on disk."""
 
-    top_view_path: Optional[str] = None
-    focus_paths: Dict[str, str] = field(default_factory=dict)
+    group_screenshots: Dict[str, Dict[str, str]] = field(default_factory=dict)
     inspection_path: Optional[str] = None
     change_summary: str = ""
+    changed_files: List[str] = field(default_factory=list)
 
 
-def generate_review_kit(
-    change_set: ChangeSet,
+# =============================================================================
+# Public API
+# =============================================================================
+
+
+def capture_group_screenshots(
     project_dir: str,
-    max_focus: int = 5,
-) -> ReviewKit:
-    """Generate review kit files on disk.
+    page_object_map: Optional[Dict[str, Set[str]]] = None,
+    changed_files: Optional[List[str]] = None,
+) -> Dict[str, Dict[str, str]]:
+    """Capture a screenshot per App::DocumentObjectGroup, organized by sheet file.
 
     Args:
-        change_set: Detected changes from before/after snapshots.
         project_dir: Project directory (contains screenshots/ subfolder).
-        max_focus: Maximum number of focused screenshots to capture.
+        page_object_map: Mapping from filename -> set of object Names.
+                         Used to associate groups with their sheet file.
+        changed_files: If provided, only recapture groups from these files.
+                       Other files' existing screenshots are preserved.
 
     Returns:
-        ReviewKit with paths to generated files.
+        Nested dict: {sheet_stem: {group_label: screenshot_path}}
     """
+    doc = FreeCAD.ActiveDocument
+    if not doc:
+        return {}
+
     screenshots_dir = Path(project_dir) / "screenshots"
     screenshots_dir.mkdir(parents=True, exist_ok=True)
 
-    # Clean up stale files from previous runs
+    view = _ensure_3d_view()
+    if not view or not hasattr(view, "saveImage"):
+        FreeCAD.Console.PrintWarning(
+            "DrawingAssistant: No 3D view for group screenshots\n"
+        )
+        return {}
+
+    # Build reverse map: object Name -> filename
+    obj_to_file: Dict[str, str] = {}
+    if page_object_map:
+        for filename, obj_names in page_object_map.items():
+            for name in obj_names:
+                obj_to_file[name] = filename
+
+    # Find all groups and map to their sheet file
+    file_groups: Dict[str, List] = {}  # filename -> [group_obj, ...]
+
+    for obj in doc.Objects:
+        if obj.TypeId != "App::DocumentObjectGroup":
+            continue
+
+        filename = obj_to_file.get(obj.Name)
+        if not filename:
+            # Group not tracked — try to find via any child
+            if hasattr(obj, "Group"):
+                for child in obj.Group:
+                    filename = obj_to_file.get(child.Name)
+                    if filename:
+                        break
+        if not filename:
+            filename = "_ungrouped"
+
+        file_groups.setdefault(filename, []).append(obj)
+
+    # Determine which files need recapture
+    files_to_capture = set()
+    if changed_files is not None:
+        files_to_capture = set(changed_files)
+    else:
+        # Capture all
+        files_to_capture = set(file_groups.keys())
+
+    # Clean old screenshots for files being recaptured
+    for filename in files_to_capture:
+        stem = Path(filename).stem
+        subdir = screenshots_dir / stem
+        if subdir.exists():
+            for old_png in subdir.glob("*.png"):
+                try:
+                    old_png.unlink()
+                except OSError:
+                    pass
+
+    # Also clean legacy review_* files from old system
     for stale in screenshots_dir.glob("review_*"):
         try:
             stale.unlink()
         except OSError:
             pass
-    for stale in screenshots_dir.glob("inspection.json"):
-        try:
-            stale.unlink()
-        except OSError:
-            pass
-    # Also clean legacy files
-    for stale in screenshots_dir.glob("latest_*"):
-        try:
-            stale.unlink()
-        except OSError:
-            pass
 
+    # Capture screenshots
+    saved_camera = None
+    if hasattr(view, "getCamera"):
+        saved_camera = view.getCamera()
+    if hasattr(view, "setAnimationEnabled"):
+        view.setAnimationEnabled(False)
+
+    result: Dict[str, Dict[str, str]] = {}
+    total_captured = 0
+
+    try:
+        for filename, groups in file_groups.items():
+            if filename not in files_to_capture:
+                continue
+
+            stem = Path(filename).stem
+            subdir = screenshots_dir / stem
+            subdir.mkdir(parents=True, exist_ok=True)
+
+            sheet_screenshots: Dict[str, str] = {}
+            used_names: set = set()
+
+            for group_obj in groups:
+                children = _get_group_children(group_obj)
+                if not children:
+                    continue
+
+                # Safe filename from group label
+                safe_label = re.sub(r"[^\w\-]", "_", group_obj.Label).strip("_") or "group"
+                if safe_label in used_names:
+                    counter = 2
+                    while f"{safe_label}_{counter}" in used_names:
+                        counter += 1
+                    safe_label = f"{safe_label}_{counter}"
+                used_names.add(safe_label)
+
+                filepath = subdir / f"{safe_label}.png"
+
+                try:
+                    FreeCADGui.Selection.clearSelection()
+                    for child in children:
+                        FreeCADGui.Selection.addSelection(child)
+
+                    view.viewTop()
+                    FreeCADGui.SendMsgToActiveView("ViewSelection")
+                    FreeCADGui.updateGui()
+                    view.saveImage(str(filepath), 1200, 900)
+
+                    sheet_screenshots[group_obj.Label] = str(filepath)
+                    total_captured += 1
+                except Exception as e:
+                    FreeCAD.Console.PrintWarning(
+                        f"DrawingAssistant: Screenshot failed for {group_obj.Label}: {e}\n"
+                    )
+                finally:
+                    FreeCADGui.Selection.clearSelection()
+
+            if sheet_screenshots:
+                result[stem] = sheet_screenshots
+
+    finally:
+        if saved_camera and hasattr(view, "setCamera"):
+            view.setCamera(saved_camera)
+            FreeCADGui.updateGui()
+        if hasattr(view, "setAnimationEnabled"):
+            view.setAnimationEnabled(True)
+
+    FreeCAD.Console.PrintMessage(
+        f"DrawingAssistant: Captured {total_captured} group screenshots\n"
+    )
+    return result
+
+
+def list_available_screenshots(project_dir: str) -> Dict[str, Dict[str, str]]:
+    """Scan screenshots/ directory for persisted group screenshots.
+
+    No document access needed — reads from disk only.
+
+    Returns:
+        Nested dict: {sheet_stem: {group_label: absolute_path}}
+        group_label is derived from the PNG filename (underscores → spaces).
+    """
+    screenshots_dir = Path(project_dir) / "screenshots"
+    if not screenshots_dir.exists():
+        return {}
+
+    result: Dict[str, Dict[str, str]] = {}
+
+    for subdir in sorted(screenshots_dir.iterdir()):
+        if not subdir.is_dir():
+            continue
+
+        sheet_stem = subdir.name
+        group_shots: Dict[str, str] = {}
+
+        for png in sorted(subdir.glob("*.png")):
+            label = png.stem.replace("_", " ")
+            group_shots[label] = str(png)
+
+        if group_shots:
+            result[sheet_stem] = group_shots
+
+    return result
+
+
+def generate_review_kit(
+    change_set: ChangeSet,
+    project_dir: str,
+    page_object_map: Optional[Dict[str, Set[str]]] = None,
+    changed_files: Optional[List[str]] = None,
+) -> ReviewKit:
+    """Generate review kit: per-group screenshots + inspection JSON.
+
+    Args:
+        change_set: Detected changes from before/after snapshots.
+        project_dir: Project directory (contains screenshots/ subfolder).
+        page_object_map: Mapping from filename -> set of object Names.
+        changed_files: If provided, only recapture these files' groups.
+
+    Returns:
+        ReviewKit with paths to generated files.
+    """
     kit = ReviewKit()
     kit.change_summary = _build_change_summary(change_set)
+    kit.changed_files = list(changed_files) if changed_files else []
 
-    # 1. Top-down view (full scene)
-    kit.top_view_path = _capture_top_view(screenshots_dir)
-
-    # 2. Focused screenshots per changed object/group
-    kit.focus_paths = _capture_focus_screenshots(
-        change_set, screenshots_dir, max_focus
+    # 1. Per-group screenshots (incremental)
+    kit.group_screenshots = capture_group_screenshots(
+        project_dir, page_object_map, changed_files
     )
 
+    # 2. TechDraw sheet screenshots (the final paper layout)
+    _capture_sheet_screenshots(project_dir, page_object_map, changed_files)
+
     # 3. Inspection JSON with object properties
+    screenshots_dir = Path(project_dir) / "screenshots"
+    screenshots_dir.mkdir(parents=True, exist_ok=True)
     kit.inspection_path = _write_inspection_json(change_set, screenshots_dir)
 
     return kit
@@ -120,17 +295,15 @@ def format_review_prompt(kit: ReviewKit) -> str:
         "",
         f"Changes: {kit.change_summary}",
         "",
-        "Available files for inspection (use Read tool as needed):",
+        "Available screenshots (use Read tool to view):",
     ]
 
-    if kit.top_view_path:
-        lines.append(f"- Top view screenshot: {kit.top_view_path}")
-
-    for label, path in kit.focus_paths.items():
-        lines.append(f'- Focus on "{label}": {path}')
+    for sheet_stem, groups in kit.group_screenshots.items():
+        for label, path in groups.items():
+            lines.append(f"- {sheet_stem} / {label}: {path}")
 
     if kit.inspection_path:
-        lines.append(f"- Object properties (exact numerical values): {kit.inspection_path}")
+        lines.append(f"- Object properties (numerical values): {kit.inspection_path}")
 
     lines.extend(
         [
@@ -149,9 +322,9 @@ def format_review_prompt(kit: ReviewKit) -> str:
     return "\n".join(lines)
 
 
-# ---------------------------------------------------------------------------
+# =============================================================================
 # Internal helpers
-# ---------------------------------------------------------------------------
+# =============================================================================
 
 
 def _build_change_summary(change_set: ChangeSet) -> str:
@@ -196,170 +369,79 @@ def _ensure_3d_view():
     return None
 
 
-def _capture_top_view(screenshots_dir: Path) -> Optional[str]:
-    """Capture a top-down view of the full scene."""
-    view = _ensure_3d_view()
-    if not view or not hasattr(view, "saveImage"):
-        FreeCAD.Console.PrintWarning(
-            "DrawingAssistant: No 3D view for top screenshot\n"
-        )
-        return None
+def _capture_sheet_screenshots(
+    project_dir: str,
+    page_object_map: Optional[Dict[str, Set[str]]] = None,
+    changed_files: Optional[List[str]] = None,
+) -> None:
+    """Capture TechDraw sheet screenshots (the paper layout with all views).
 
-    filepath = screenshots_dir / "review_top.png"
-
-    saved_camera = None
-    if hasattr(view, "getCamera"):
-        saved_camera = view.getCamera()
-    if hasattr(view, "setAnimationEnabled"):
-        view.setAnimationEnabled(False)
-
-    try:
-        view.viewTop()
-        view.fitAll()
-        FreeCADGui.updateGui()
-        view.saveImage(str(filepath), 1200, 900)
-        FreeCAD.Console.PrintMessage(
-            f"DrawingAssistant: Captured review_top.png\n"
-        )
-        return str(filepath)
-    except Exception as e:
-        FreeCAD.Console.PrintWarning(
-            f"DrawingAssistant: Top view capture failed: {e}\n"
-        )
-        return None
-    finally:
-        if saved_camera and hasattr(view, "setCamera"):
-            view.setCamera(saved_camera)
-            FreeCADGui.updateGui()
-        if hasattr(view, "setAnimationEnabled"):
-            view.setAnimationEnabled(True)
-
-
-def _capture_focus_screenshots(
-    change_set: ChangeSet,
-    screenshots_dir: Path,
-    max_focus: int,
-) -> Dict[str, str]:
-    """Capture zoomed screenshots for changed objects/groups."""
+    Finds TechDraw::DrawPage objects, maps them to their sheet file,
+    activates the TechDraw MDI tab, and captures via Qt grab().
+    Saves as screenshots/{sheet_stem}/_sheet.png.
+    """
     doc = FreeCAD.ActiveDocument
     if not doc:
-        return {}
+        return
 
-    view = _ensure_3d_view()
-    if not view or not hasattr(view, "saveImage"):
-        return {}
+    # Build reverse map
+    obj_to_file: Dict[str, str] = {}
+    if page_object_map:
+        for filename, obj_names in page_object_map.items():
+            for name in obj_names:
+                obj_to_file[name] = filename
 
-    # Collect changed object names
-    changed_names = set()
-    for change in change_set.created:
-        changed_names.add(change.object_name)
-    for change in change_set.modified:
-        changed_names.add(change.object_name)
-
-    if not changed_names:
-        return {}
-
-    # Group by App::DocumentObjectGroup parent
-    groups: Dict[str, List] = {}  # group_label -> [obj, ...]
-    ungrouped: List = []
-
-    for name in changed_names:
-        obj = doc.getObject(name)
-        if not obj or obj.TypeId in _SKIP_TYPES:
+    # Find DrawPage objects and map to files
+    pages_to_capture: List[tuple] = []  # (page_obj, filename)
+    for obj in doc.Objects:
+        if obj.TypeId != "TechDraw::DrawPage":
             continue
-        # TechDraw objects have no 3D geometry to zoom into
-        if obj.TypeId in _SKIP_FOCUS_TYPES:
+        filename = obj_to_file.get(obj.Name, "_ungrouped")
+        if changed_files is not None and filename not in changed_files:
             continue
+        pages_to_capture.append((obj, filename))
 
-        parent_group = _find_parent_group(obj)
-        if parent_group:
-            label = parent_group.Label
-            groups.setdefault(label, []).append(parent_group)
-            # Deduplicate — we add the group itself, not individual children
-        else:
-            ungrouped.append(obj)
+    if not pages_to_capture:
+        return
 
-    # Build focus targets: (label, [objects_to_select])
-    targets = []
+    screenshots_dir = Path(project_dir) / "screenshots"
 
-    # Groups first (deduplicated)
-    seen_groups = set()
-    for label, group_refs in groups.items():
-        if label not in seen_groups:
-            seen_groups.add(label)
-            # Select all children of the group for a full view
-            group_obj = group_refs[0]
-            children = _get_group_children(group_obj)
-            if children:
-                targets.append((label, children))
-
-    # Then ungrouped individual objects
-    for obj in ungrouped:
-        targets.append((obj.Label, [obj]))
-
-    # Cap at max_focus
-    targets = targets[:max_focus]
-
-    # Capture each target
-    saved_camera = None
-    if hasattr(view, "getCamera"):
-        saved_camera = view.getCamera()
-    if hasattr(view, "setAnimationEnabled"):
-        view.setAnimationEnabled(False)
-
-    result = {}
-    used_filenames = set()
     try:
-        for label, objects in targets:
-            safe_label = re.sub(r"[^\w\-]", "_", label).strip("_") or "obj"
-            # Prevent filename collisions
-            if safe_label in used_filenames:
-                counter = 2
-                while f"{safe_label}_{counter}" in used_filenames:
-                    counter += 1
-                safe_label = f"{safe_label}_{counter}"
-            used_filenames.add(safe_label)
-            filepath = screenshots_dir / f"review_focus_{safe_label}.png"
-
-            try:
-                FreeCADGui.Selection.clearSelection()
-                for obj in objects:
-                    FreeCADGui.Selection.addSelection(obj)
-
-                view.viewTop()
-                FreeCADGui.SendMsgToActiveView("ViewSelection")
-                FreeCADGui.updateGui()
-                view.saveImage(str(filepath), 1200, 900)
-                result[label] = str(filepath)
-
-                FreeCAD.Console.PrintMessage(
-                    f"DrawingAssistant: Captured review_focus_{safe_label}.png\n"
-                )
-            except Exception as e:
-                FreeCAD.Console.PrintWarning(
-                    f"DrawingAssistant: Focus capture failed for {label}: {e}\n"
-                )
-            finally:
-                FreeCADGui.Selection.clearSelection()
-    finally:
-        if saved_camera and hasattr(view, "setCamera"):
-            view.setCamera(saved_camera)
-            FreeCADGui.updateGui()
-        if hasattr(view, "setAnimationEnabled"):
-            view.setAnimationEnabled(True)
-
-    return result
-
-
-def _find_parent_group(obj):
-    """Find the App::DocumentObjectGroup parent of an object, if any."""
-    try:
-        for parent in obj.InList:
-            if parent.TypeId == "App::DocumentObjectGroup":
-                return parent
+        mw = FreeCADGui.getMainWindow()
+        mdi = mw.centralWidget()
     except Exception:
-        pass
-    return None
+        return
+
+    for page_obj, filename in pages_to_capture:
+        stem = Path(filename).stem
+        subdir = screenshots_dir / stem
+        subdir.mkdir(parents=True, exist_ok=True)
+        filepath = subdir / "_sheet.png"
+
+        try:
+            # Activate the TechDraw page — this opens/focuses its MDI tab
+            page_obj.ViewObject.doubleClicked()
+            FreeCADGui.updateGui()
+
+            # Find the TechDraw MDI widget that was just activated
+            for sub in mdi.subWindowList():
+                widget = sub.widget()
+                if widget and "MDIViewPage" in widget.metaObject().className():
+                    # Check if this is the active/focused one
+                    if sub == mdi.activeSubWindow():
+                        pixmap = widget.grab()
+                        pixmap.save(str(filepath))
+                        FreeCAD.Console.PrintMessage(
+                            f"DrawingAssistant: Captured sheet screenshot {stem}/_sheet.png\n"
+                        )
+                        break
+        except Exception as e:
+            FreeCAD.Console.PrintWarning(
+                f"DrawingAssistant: Sheet screenshot failed for {page_obj.Label}: {e}\n"
+            )
+
+    # Switch back to 3D view
+    _ensure_3d_view()
 
 
 def _get_group_children(group_obj) -> List:

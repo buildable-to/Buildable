@@ -1,26 +1,36 @@
 # FreeCAD Drawing Project
 
+## Project Context
+- `project.md` contains engineer-provided project notes (naming conventions, materials, rules). Follow these when creating drawings.
+- `reference_docs/` may contain project PDFs (calculations, specifications, floor plans). Use the Read tool to consult them when relevant.
+
 ## Execution Model
-All `*.py` files in `pages/` are executed together as one script.
+All `*.py` files in `pages/` are executed together.
 Execution order: underscore-prefixed files first, then alphabetical.
+The system clears all objects before re-executing a file — do NOT use
+idempotent patterns. Just create objects directly.
 
 ## Rules for code
 - All dimensions in millimeters
 - End each script with `doc.recompute()`
 - Coordinate system: X = right, Y = up (2D plan view)
-- Each drawing group must use a unique origin offset so groups don't overlap in 3D view. E.g. main plan at (0,0), detail at (20000,0). Offset by ≥15000mm.
+- The system provides `SHEET_Y_OFFSET` — use it as the base Y for all geometry so different sheets don't overlap in Draft space. Offset groups along X by ≥15000mm within a file. E.g. plan at (0, SHEET_Y_OFFSET), section at (20000, SHEET_Y_OFFSET).
 
 ## File Organization
-One file = one drawing group = one view on the TechDraw sheet.
+One file = one complete drawing sheet.
 
-Each file should:
-1. Create geometry, collect in `draft_objects` list
-2. Create `App::DocumentObjectGroup`, set `grp.Group = draft_objects`
-3. Get or create TechDraw page (idempotent)
-4. Add `DrawViewDraft` for this group (idempotent)
+Each file creates ALL geometry, groups, AND views for one sheet:
+1. Constants and dimensions at the top
+2. Drawing groups (each with unique origin offset ≥15000mm)
+3. TechDraw page + template
+4. ALL views with coordinated positions and scales
+5. `doc.recompute()` at the end
 
-ALWAYS edit an existing file when adding to the same drawing group.
-Only create a new file for a genuinely new drawing group.
+ALWAYS edit the existing file when modifying anything on that sheet.
+Only create a new file for a genuinely NEW SHEET.
+
+Use `_helpers.py` for shared utility functions across sheets.
+NEVER put TechDraw page/view code in underscore-prefixed files.
 
 ## Drawing Tools
 - **Draft**: make_wire, make_circle, make_rectangle, make_text, make_label, make_linear_dimension, make_hatch

@@ -235,6 +235,8 @@ System prompt instructs Claude to:
 
 2D structural drawing assistant for precast concrete engineers. Same code-as-source-of-truth architecture as AIAssistant, but focused on Draft (2D geometry) + TechDraw (sheet drawings) workflows.
 
+**Design philosophy:** The inner Claude (Claude Code CLI) is a coding agent that improves over time. Our system provides structural guardrails (one-file-per-sheet, SHEET_Y_OFFSET injection, clear-and-rebuild execution) but leaves code organization decisions to the inner Claude. Don't over-constrain the prompt — enforce what prevents bugs, leave the rest to Claude's judgment.
+
 #### Module Structure
 
 ```
@@ -267,9 +269,10 @@ DrawingAssistant/
 MyProject/
 ├── MyProject.FCStd
 └── MyProject/
-    ├── pages/                   # One .py file per drawing page
-    │   ├── 01_column_grid.py
-    │   └── 02_foundation.py
+    ├── pages/                   # One .py file per drawing sheet (geometry + TechDraw)
+    │   ├── _helpers.py          # Optional shared functions (run first)
+    │   ├── 01_formwork.py       # Complete sheet: geometry + groups + page + views
+    │   └── 02_reinforcement.py  # Complete sheet: geometry + groups + page + views
     ├── screenshots/             # Review kit output (auto-generated)
     │   ├── review_top.png
     │   ├── review_focus_*.png
@@ -315,8 +318,8 @@ Code executed → generate_review_kit() → format_review_prompt()
 
 The system prompt in `FREECAD_SYSTEM_PROMPT_TEMPLATE` teaches the inner Claude how to produce correct drawings. Key rules tuned through testing:
 
-- **File pattern**: One file = one drawing group = one DrawViewDraft on the sheet. Each file creates geometry, groups it, and adds a view idempotently.
-- **Origin offsets**: Each drawing group uses a unique origin offset (>=15000mm) so groups don't overlap in the 3D Draft view.
+- **File pattern**: One file = one complete drawing sheet. Each file creates ALL geometry, groups, page, and views. No separate sheet coordinator files. No idempotent patterns — executor clears objects before re-execution.
+- **SHEET_Y_OFFSET**: Auto-injected by executor (sheet_index × 100000) so each sheet's geometry occupies a unique Y band in Draft space. Within a file, groups offset along X by >=15000mm.
 - **addView resets position**: `page.addView(view)` resets X/Y to page center. Must set `view.X`/`view.Y` AFTER `addView()`.
 - **Page coordinates**: Origin (0,0) at bottom-left, Y increases up. Title block at low Y. Safe area: X 20–400, Y 50–260 (A3).
 - **Scale-to-fit**: Inner Claude must compute geometry extent and pick a standard scale (1:20..1:500) that fits the usable sheet area, with a comment showing the math.
