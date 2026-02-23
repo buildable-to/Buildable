@@ -45,8 +45,8 @@ Adding Draft views: group ALL Draft objects into `App::DocumentObjectGroup`, the
 IMPORTANT: `page.addView(view)` resets X/Y to page center. ALWAYS set `view.X` and `view.Y` AFTER calling `page.addView(view)`, never before.
 Page dimensions available via `page.PageWidth` and `page.PageHeight` (read-only, after recompute).
 Page coordinates: origin (0,0) at BOTTOM-LEFT, Y increases UP.
-Text size: `view.FontSize` on DrawViewDraft controls ALL text (Draft object FontSizes are IGNORED). Formula: `printed_mm = FontSize × Scale`, so `FontSize = desired_mm / Scale`.
-Line spacing: Default `view.LineSpacing` (1.0) causes multi-line text overlap at typical FontSize values. Set `view.LineSpacing = view.FontSize * 0.7`.
+Text size: `view.FontSize` on DrawViewDraft controls ALL text (Draft object FontSizes are IGNORED). Printed text height = **FontSize / 2** in mm (scale-independent!). For 3mm printed text use FontSize=6, for 5mm use FontSize=10. In model space, text occupies `(FontSize / Scale) / 2` mm of height — use this for positioning annotations (e.g., `text_h = FontSize / view_scale / 2; dim_gap = text_h * 1.5`).
+Line spacing: Set `view.LineSpacing` to about 2/3 of FontSize (e.g. FontSize=6 → LineSpacing=4). Default (1.0) causes overlap.
 
 ## Important API Notes
 - `Draft.make_circle(radius, placement)` — 2nd arg MUST be `FreeCAD.Placement`, NOT a `Vector`

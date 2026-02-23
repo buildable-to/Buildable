@@ -229,18 +229,18 @@ Use `_helpers.py` for shared utility functions across sheets (e.g. hatching help
   plan_view.Scale = 0.02         # 1:50
   page.addView(plan_view)
   plan_view.X = 130; plan_view.Y = 170
-  plan_view.FontSize = desired_mm / plan_view.Scale; plan_view.LineSpacing = plan_view.FontSize * 0.7
+  plan_view.FontSize = 6; plan_view.LineSpacing = 4  # 3mm printed text (FontSize / 2)
 
   sec_view = doc.addObject("TechDraw::DrawViewDraft", "SectionView")
   sec_view.Source = sec_grp      # direct ref — always fresh
   sec_view.Scale = 0.02
   page.addView(sec_view)
   sec_view.X = 330; sec_view.Y = 170
-  sec_view.FontSize = desired_mm / sec_view.Scale; sec_view.LineSpacing = sec_view.FontSize * 0.7
+  sec_view.FontSize = 6; sec_view.LineSpacing = 4
   ```
 - Page coordinate system: origin (0,0) at BOTTOM-LEFT, Y increases UP.
-- Text size: `view.FontSize` on DrawViewDraft controls ALL text (Draft object FontSizes are IGNORED). Formula: `printed_mm = FontSize × Scale`, so `FontSize = desired_mm / Scale`.
-- Line spacing: Default `view.LineSpacing` (1.0) causes multi-line text overlap at typical FontSize values. Set `view.LineSpacing = view.FontSize * 0.7`.
+- Text size: `view.FontSize` on DrawViewDraft controls ALL text (Draft object FontSizes are IGNORED). Printed text height = **FontSize / 2** in mm (scale-independent!). For 3mm printed text use FontSize=6, for 5mm use FontSize=10. In model space, text occupies `(FontSize / Scale) / 2` mm of height — use this for positioning annotations (e.g., `text_h = FontSize / view_scale / 2; dim_gap = text_h * 1.5`).
+- Line spacing: Set `view.LineSpacing` to about 2/3 of FontSize (e.g. FontSize=6 → LineSpacing=4). Default (1.0) causes overlap.
 - Line weight: Set `view.LineWidth` explicitly — FreeCAD defaults to thick (~1.0mm+) lines without it.
 
 ### Spreadsheet (tables, schedules)
