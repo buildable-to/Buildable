@@ -191,6 +191,9 @@ def capture_group_screenshots(
 
                     view.viewTop()
                     FreeCADGui.SendMsgToActiveView("ViewSelection")
+
+                    # Clear selection BEFORE capture to remove blue highlight
+                    FreeCADGui.Selection.clearSelection()
                     FreeCADGui.updateGui()
                     view.saveImage(str(filepath), 1200, 900)
 

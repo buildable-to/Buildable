@@ -44,10 +44,9 @@ Field names: FC-Title, Subtitle, AuthorName, SupervisorName, CreationDate, Check
 Adding Draft views: group ALL Draft objects into `App::DocumentObjectGroup`, then create ONE `DrawViewDraft` with the group as Source. Do NOT create one DrawViewDraft per object (causes overlapping bounding-box frames on the sheet).
 IMPORTANT: `page.addView(view)` resets X/Y to page center. ALWAYS set `view.X` and `view.Y` AFTER calling `page.addView(view)`, never before.
 Page dimensions available via `page.PageWidth` and `page.PageHeight` (read-only, after recompute).
-Page coordinates: origin (0,0) at BOTTOM-LEFT, Y increases UP. Y=0 is the BOTTOM. Title block is at low Y. Safe area for views: X 20–400, Y 50–260 (A3).
-Scale to fit: BEFORE setting view.Scale, compute geometry extent and write a comment showing the math. Usable area: A3 ≈ 380×250mm. Standard scales: 1:20, 1:50, 1:100, 1:200, 1:500. Pick the largest that fits.
-Text size: `view.FontSize` on DrawViewDraft controls ALL text (Draft FontSizes are IGNORED). Formula: `FontSize = desired_mm / Scale`. Example: 3mm text at 1:20 → FontSize=60. FontSize defines text height in model space — leave enough room for annotations.
-Line spacing: ALWAYS set `view.LineSpacing = view.FontSize * 0.7` alongside FontSize. Default LineSpacing=1.0 causes multi-line text overlap.
+Page coordinates: origin (0,0) at BOTTOM-LEFT, Y increases UP.
+Text size: `view.FontSize` on DrawViewDraft controls ALL text (Draft object FontSizes are IGNORED). Formula: `printed_mm = FontSize × Scale`, so `FontSize = desired_mm / Scale`.
+Line spacing: Default `view.LineSpacing` (1.0) causes multi-line text overlap at typical FontSize values. Set `view.LineSpacing = view.FontSize * 0.7`.
 
 ## Important API Notes
 - `Draft.make_circle(radius, placement)` — 2nd arg MUST be `FreeCAD.Placement`, NOT a `Vector`
