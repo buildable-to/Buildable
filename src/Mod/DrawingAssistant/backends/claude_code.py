@@ -250,10 +250,36 @@ Use `_helpers.py` for shared utility functions across sheets (e.g. hatching help
 - Text size: set `view.FontSize` on DrawViewDraft to control text size on the sheet. Draft object FontSizes are IGNORED in the rendered view. Use FontSize=5.0 for 1:100 plans, FontSize=8.0 for 1:20 details. Larger scale -> larger FontSize.
 - Line spacing: ALWAYS set `view.LineSpacing = view.FontSize * 0.7` alongside FontSize. Default LineSpacing=1.0 causes multi-line text to overlap.
 
+## View Positioning to Prevent Overlaps
+
+A3 Landscape sheet safe area: X 20–400mm, Y 55–260mm (title block zone is Y 0–50mm).
+
+**Standard layout for beam_complete on A3 Landscape:**
+- Cross-section (1:20, ~100mm wide × 75mm tall): X=50, Y=160
+- Longitudinal elevation (1:50, ~180mm wide × 50mm tall): X=210, Y=220
+- Bar shape diagrams (1:10, ~80mm wide × 120mm tall): X=340, Y=180
+- Bar schedule (DrawViewSpreadsheet): X=280, Y=80 (above title block zone)
+- Material spec + general notes view (1:20, ~150mm wide): X=50, Y=75
+
+**RULES:**
+1. Never place any view below Y=55 — that's the title block territory.
+2. After placing all views, verify total X extents don't exceed 400mm (sum of widths + margins).
+3. When multiple views occupy the same Y zone, stack them with 10–20mm vertical spacing.
+
 ### Spreadsheet (tables, schedules)
 - Create: `sheet = doc.addObject("Spreadsheet::Sheet", "SheetName")`
 - Set cells: `sheet.set("A1", "Header")`
 - Embed in TechDraw: `view = doc.addObject("TechDraw::DrawViewSpreadsheet", "TableView")`
+- **DrawViewSpreadsheet CellEnd is MANDATORY**: ALWAYS set CellStart and CellEnd explicitly or only the first data row renders.
+  ```
+  sched_view = doc.addObject("TechDraw::DrawViewSpreadsheet", "ScheduleView")
+  sched_view.Source = schedule
+  page.addView(sched_view)
+  sched_view.CellStart = "A1"
+  sched_view.CellEnd = "G" + str(len(bars) + 1)  # header row + all data rows
+  sched_view.X = 280; sched_view.Y = 80
+  ```
+  Without explicit CellEnd, TechDraw defaults to showing only the header + 1 data row, regardless of how many rows the schedule contains. Set CellEnd to the last column and last row, e.g., "G7" for 6 bar positions + header.
 
 ## Engineering Helpers (in _engineering_base.py — auto-created, always available)
 Pre-built functions for common drawing elements. Use these for stirrups, bar schedules, and material specs instead of reimplementing:
@@ -299,14 +325,33 @@ All stirrups and links MUST have a 135° hook (not 90°) per Eurocode ductility 
 - In labels: always annotate with hook angle, e.g., "Pos 3  d8@150 (135°)" or "d8@150 (135° hook)"
 - Why: 90° corners slip; 135° provides mechanical anchorage against pullout
 
-## ANCHORAGE AT SUPPORTS: REQUIRED for all beam bottom bars
-Bottom longitudinal bars must show anchorage length extending into the support (wall, column, bearing pad):
-- Ld = 40d (straight bar) or Ld = 28d (with standard hook)
-- Example: d20 in C30/37 → Ld = 40×20 = 800mm (straight) or 560mm (hook)
-- Draw on beam elevation as: bar continues past span face → Ld dimension + label
-- Show on BOTH ends of the beam span. Top bars only at continuous/cantilever supports.
-- Label format: "Ld = 800mm = 40d" or "Ld = 560mm = 28d (hook)"
-- See rebar_conventions.md for complete geometry code pattern
+**Stirrup shape diagram hook extension dimension (REQUIRED):**
+On each stirrup shape diagram, ALWAYS dimension the hook extension length:
+  - Hook length = max(10d, 75mm)  (e.g., d8 → max(80mm, 75mm) = 80mm)
+  - Use `Draft.make_linear_dimension()` to show the dimension from corner to hook tip
+  - Label the dimension with the hook length, e.g., "5d = 40mm" (minimum) or "80mm" (actual)
+
+## BAR LENGTH AND ANCHORAGE: Choose ONE Strategy per Bar
+
+**Strategy A: Hooks within span** (standard for simply supported beams)
+- Bar ends at COVER distance from beam face
+- Hooks bend UP (bottom bars) or DOWN (top bars) inside the beam
+- Cut length = SPAN - 2×COVER + 2×HOOK  (e.g., 6000 - 70 + 400 = 6330mm for d20)
+- On elevation: bar stays INSIDE beam body, no extension outside span
+- Anchorage provided by the hook itself: "Standard anchorage via end hooks" or "lb,eq ≈ 560mm per EC2 §8.4.4"
+- **DO NOT draw** 800mm anchorage extension lines outside the span when using this strategy
+
+**Strategy B: Straight bars into supports** (for large Ld or compact sections)
+- Bar extends PAST beam face into the support block by Ld distance
+- Ld = 40d (straight) or 28d (with hook) per Eurocode
+- Cut length = SPAN + 2×Ld - 2×COVER  (e.g., 6000 + 1600 - 70 = 7530mm for d20 @ 40d)
+- On elevation: draw bar body extending 800mm into each support block
+- Dimension the extension: "Ld = 800mm = 40d" or similar label
+- **DO NOT draw** hooks at bar ends inside the span when using this strategy
+
+**CRITICAL: Do not mix strategies.** If geometry shows hooks inside the beam, do NOT also draw 800mm extension lines outside the span.
+
+For simply supported beams: **Strategy A is standard.** Draw hooks at ends, use hooks for anchorage. Dimension the hook or annotate the equivalent anchorage length. See rebar_conventions.md for complete geometry code patterns.
 
 ## BAR SHAPE DIAGRAMS: Required for complete drawings
 Every position in the bar schedule must have a companion shape diagram:

@@ -349,6 +349,13 @@ def _check_doc_completeness() -> List[str]:
                 except Exception:
                     pass
 
+        # Check DrawViewSpreadsheet has explicit CellEnd (otherwise only shows row 1)
+        sched_views = [obj for obj in doc.Objects if obj.TypeId == "TechDraw::DrawViewSpreadsheet"]
+        has_cell_end = any(
+            getattr(obj, "CellEnd", "") not in ("", "A1")
+            for obj in sched_views
+        )
+
         # Check for anchorage geometry (labels containing "anc", "anchorage", "ld")
         has_anchorage = any(
             "anc" in l or "anchorage" in l or "_ld" in l or "ld_" in l
@@ -367,6 +374,7 @@ def _check_doc_completeness() -> List[str]:
         checks = [
             f"Bar bending schedule (Spreadsheet): {'✓ PRESENT' if has_spreadsheet else '✗ MISSING'}",
             f"Schedule embedded in sheet (DrawViewSpreadsheet): {'✓ PRESENT' if has_view_ssheet else '✗ MISSING — use DrawViewSpreadsheet'}",
+            f"Schedule CellEnd set explicitly: {'✓ YES' if has_cell_end else ('✗ NO — set sched_view.CellEnd = \"G\" + str(len(bars)+1)' if sched_views else '~ N/A (no spreadsheet view)')}",
             f"Schedule completeness: {'✓ ' + str(schedule_rows) + ' positions' if schedule_rows > 1 else ('✗ only 1 row — add ALL bar positions' if schedule_rows == 1 else '✗ no data rows')}",
             f"Anchorage at supports: {'✓ PRESENT' if has_anchorage else '✗ MISSING — bottom bars must show Ld into supports'}",
             f"Bar shape diagrams: {'✓ PRESENT' if has_shapes else '✗ MISSING — add shape sketch per position'}",

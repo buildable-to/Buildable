@@ -199,7 +199,7 @@ Always annotate stirrup spacing with the hook angle:
 
 ## Quick Reference: Code Snippets
 
-### Bar Bending Schedule (Spreadsheet)
+### Bar Bending Schedule (Spreadsheet with CellEnd)
 ```python
 sht = doc.addObject("Spreadsheet::Sheet", "BarSchedule")
 headers = ["Pos", "Ø (mm)", "Shape", "Total Length (mm)", "Qty", "Unit Weight (kg/m)", "Total Weight (kg)"]
@@ -208,20 +208,24 @@ for col, h in enumerate(headers):
     sht.set(cell, h)
 
 # Add data rows with bar info
-sht.set("A2", "1")      # Pos
-sht.set("B2", "20")     # Diameter
-sht.set("C2", "Straight")
-sht.set("D2", "3000")   # Length in mm
-sht.set("E2", "4")      # Quantity
-# Unit weight and total weight calculated
+bars = [
+    {"pos": "1", "dia": 20, "shape": "Straight", "length_mm": 3000, "qty": 4},
+    {"pos": "2", "dia": 12, "shape": "Straight", "length_mm": 2800, "qty": 2},
+    {"pos": "3", "dia": 8, "shape": "Hook", "length_mm": 500, "qty": 12},
+]
+# Fill spreadsheet with bar rows (omitted for brevity)
 
 # Embed in TechDraw sheet
-view_ssheet = doc.addObject("TechDraw::DrawViewSpreadsheet", "ScheduleView")
-view_ssheet.Source = sht
-page.addView(view_ssheet)
-view_ssheet.X = 20
-view_ssheet.Y = 50
+sched_view = doc.addObject("TechDraw::DrawViewSpreadsheet", "ScheduleView")
+sched_view.Source = sht
+page.addView(sched_view)
+sched_view.CellStart = "A1"
+sched_view.CellEnd = f"G{len(bars) + 1}"  # CRITICAL: must be explicit, default shows only 1 row
+sched_view.X = 280
+sched_view.Y = 80
 ```
+
+**CRITICAL:** Without explicit `CellEnd`, TechDraw defaults to showing only the header row + 1 data row, regardless of how many data rows exist in the spreadsheet. Always set `CellEnd` to the last column letter and last row number, e.g., `"G7"` for 6 bar positions + 1 header row.
 
 ### Material Specification Text Block
 ```python
@@ -297,13 +301,17 @@ Before responding "LOOKS_GOOD" in drawing review, verify:
 - [ ] Stirrups/links clearly shown (for beams/columns)
 - [ ] Cover dimensions dimensioned on at least TWO edges (top/bottom AND side)
 - [ ] **Anchorage shown and dimensioned at support ends** (Ld = Xmm = Xd)
+- [ ] **Anchorage strategy consistent** (hooks-within-span OR straight-extensions, not both)
 - [ ] Overall width/height/span dimensions present
 - [ ] Bar bending schedule visible in sheet (DrawViewSpreadsheet embedded)
-- [ ] **Bar schedule includes ALL positions** (Pos 1, 2, 3...) — not just primary bar
-- [ ] **Bar shape diagram present for each position** — small bent-shape sketch with dimensions
+- [ ] **Bar schedule shows ALL positions** (Pos 1, 2, 3...) — CellEnd must be set explicitly
+- [ ] **Bar shape diagrams present** for each position — small bent-shape sketch with dimensions
+- [ ] **Stirrup hook dimensions labeled** on shape diagrams (e.g., "5d = 40mm")
 - [ ] Material spec text block readable (concrete grade, steel grade, cover, exposure visible)
 - [ ] **General notes block present** (at least 5 standard notes: dims in mm, bending per EN, lap length, spacers, etc.)
 - [ ] Section titles present (e.g., "SECTION A-A, Scale 1:20")
+- [ ] **Views positioned above Y=55mm** on sheet (no overlap with title block zone)
+- [ ] All views fit horizontally (total extent < 380mm)
 - [ ] Title block template used (_TD.svg, not blank)
 - [ ] Title block fields populated (title, drawing number, scale, date)
 - [ ] All text readable, no overlapping dimensions or labels
