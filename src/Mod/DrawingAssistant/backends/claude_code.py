@@ -247,8 +247,13 @@ Use `_helpers.py` for shared utility functions across sheets (e.g. hatching help
   # A3 usable area: 380 x 250mm -> pick 1:N where both fit
   ```
   Standard scales: 1:20, 1:50, 1:100, 1:200, 1:500. Pick the largest that fits with margin.
-- Text size: set `view.FontSize` on DrawViewDraft to control text size on the sheet. Draft object FontSizes are IGNORED in the rendered view. Use FontSize=5.0 for 1:100 plans, FontSize=8.0 for 1:20 details. Larger scale -> larger FontSize.
+- Text size: FontSize controls printed text height via `printed_mm = FontSize × Scale`. To hit 3mm printed text (readable on A3), set FontSize = 3 / Scale. Standard values:
+    - Scale=0.05 (1:20)  → FontSize=60,  LineSpacing=42
+    - Scale=0.02 (1:50)  → FontSize=150, LineSpacing=105
+    - Scale=0.01 (1:100) → FontSize=300, LineSpacing=210
+  For view titles (larger, 5mm): FontSize = 5 / Scale (e.g. 100 at 1:20, 250 at 1:50). Draft object FontSizes are IGNORED by DrawViewDraft — only view.FontSize matters.
 - Line spacing: ALWAYS set `view.LineSpacing = view.FontSize * 0.7` alongside FontSize. Default LineSpacing=1.0 causes multi-line text to overlap.
+- Line width: set view.LineWidth to improve print legibility. Default (~0.18mm) is very thin. Recommended: geometry views (cross-section, elevation): view.LineWidth = 0.35; bar shape diagrams: view.LineWidth = 0.25; notes/schedule views: view.LineWidth = 0.18 (default, acceptable for text).
 
 ## HEIGHT-AWARE VIEW PLACEMENT (MANDATORY for views in the bottom zone)
 
@@ -258,9 +263,11 @@ A3 Landscape sheet: title block zone Y 0–50mm, safe area Y 55–260mm, safe X 
 
 Multi-line text views (DrawViewDraft with notes/material spec):
 ```
-height_mm = num_lines × FontSize × 1.3
+printed_line_height = FontSize × Scale  # e.g., 150 × 0.02 = 3.0mm per line at 1:50
+height_mm = num_lines × printed_line_height × 1.3
 Y_center = max(55 + height_mm/2 + 10, 90)
-Example: 8 lines × FontSize=7 × 1.3 = 73mm → Y = max(55+36+10, 90) = 101
+Example: 8 notes lines, FontSize=150, Scale=0.02 → 3mm × 1.3 = 3.9mm/line → 31mm height
+         Y = max(55 + 15 + 10, 90) = 90
 ```
 
 DrawViewSpreadsheet (schedule tables):
@@ -271,11 +278,11 @@ Example: 3 bars + header + total = 5 rows → 35mm → Y = max(55+18+10, 90) = 9
 ```
 
 **UPDATED standard layout for beam_complete on A3 Landscape:**
-- Cross-section (1:20, ~100mm wide × 75mm tall): X=80, Y=190
-- Longitudinal elevation (1:50, ~180mm wide × 50mm tall): X=230, Y=235
-- Bar shape diagrams (1:20, ~80mm wide × 120mm tall): X=355, Y=160
-- Bar schedule: X=260, Y = (compute based on num_bars)
-- General notes + material spec: X=80, Y = (compute based on num_lines)
+- Cross-section (1:20): X=80, Y=175  (~40mm wide × 35mm tall including dims)
+- Longitudinal elevation (1:50): X=250, Y=210  (~140mm wide × 25mm tall)
+- Bar shape diagrams (1:20): X=360, Y=155  (~80mm wide × 100mm tall)
+- Bar schedule (spreadsheet): X=260, Y=90 (compute height: (rows+2) × 7mm, center at Y=90)
+- General notes + material spec (text): X=80, Y=90 (compute height: num_lines × 4mm, center at Y=90)
 
 **RULES:**
 1. Never place view center below Y=70 — this ensures bottom edge ≥ Y=55.
