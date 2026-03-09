@@ -148,6 +148,8 @@ function fitCamera(mesh) {
 function loadSTL(arrayBuffer) {
   const geometry = loader.parse(arrayBuffer);
   geometry.computeVertexNormals();
+  // FreeCAD is Z-up, Three.js is Y-up
+  geometry.rotateX(-Math.PI / 2);
   if (currentMesh) scene.remove(currentMesh);
   currentMesh = new THREE.Mesh(geometry, material);
   scene.add(currentMesh);
