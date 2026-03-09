@@ -133,6 +133,7 @@ async def chat(request: Request):
             result = await asyncio.to_thread(claude.chat, message)
 
             # Send response text
+            print(f"[chat] source_edited={result['source_edited']}, session={sid}")
             yield _sse({"type": "text", "content": result["response"], "session_id": sid})
 
             # If source.py was edited, read it and execute

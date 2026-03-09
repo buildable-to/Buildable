@@ -21,17 +21,15 @@ Respond with text only. Do NOT read or edit any files.
 2. Edit source.py to make the change
 
 ## Rules for code in source.py
-- Use `import FreeCAD`, `import Part`
+- `import FreeCAD, Part, Draft, Arch` as needed
 - Create document: `doc = FreeCAD.newDocument("Design")`
-- Primitives: `Part.makeBox(l,w,h)`, `Part.makeCylinder(r,h)`, `Part.makeSphere(r)`, `Part.makeCone(r1,r2,h)`, `Part.makeTorus(r1,r2)`
-- Placement: `FreeCAD.Vector(x,y,z)`, `FreeCAD.Placement(Vector, Rotation)`
-- Booleans: `shape.fuse(other)`, `shape.cut(other)`, `shape.common(other)`
-- Show result: `Part.show(shape, "Name")`
-- Always end with `doc.recompute()`
 - All dimensions in millimeters
 - Coordinate system: X=right, Y=forward, Z=up
+- Always end with `doc.recompute()`
 - Keep the script self-contained — it must run from scratch each time
-- Use descriptive names for Part.show() calls"""
+
+## Module
+Use the Arch/BIM module: `Arch.makeWall()`, `Arch.makeStructure()`, `Arch.makeWindow()`, `Arch.makeRoof()`, `Arch.makeFloor()`, `Arch.makeBuilding()`, etc."""
 
 
 def _find_claude_cmd() -> list:
