@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FreeCAD Web Viewer</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { display: flex; height: 100vh; background: #1a1a2e; color: #e0e0e0; font-family: system-ui, sans-serif; }
+  #editor { width: 380px; display: flex; flex-direction: column; padding: 12px; gap: 10px; border-right: 1px solid #333; }
+  #editor h2 { font-size: 14px; color: #888; text-transform: uppercase; letter-spacing: 1px; }
+  textarea { flex: 1; background: #0f0f23; color: #ccc; border: 1px solid #333; border-radius: 6px; padding: 10px; font-family: 'Fira Code', 'Consolas', monospace; font-size: 13px; resize: none; tab-size: 4; }
+  textarea:focus { outline: none; border-color: #5566ff; }
+  button { background: #5566ff; color: white; border: none; border-radius: 6px; padding: 10px; font-size: 14px; font-weight: 600; cursor: pointer; }
+  button:hover { background: #4455dd; }
+  button:disabled { background: #333; cursor: wait; }
+  #error { color: #ff6b6b; font-size: 12px; max-height: 100px; overflow-y: auto; white-space: pre-wrap; font-family: monospace; }
+  #viewer { flex: 1; position: relative; }
+  canvas { display: block; width: 100%; height: 100%; }
+</style>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+  }
+}
+</script>
+</head>
+<body>
+<div id="editor">
+  <h2>FreeCAD Script</h2>
+  <textarea id="script">import FreeCAD
+import Part
+
+doc = FreeCAD.newDocument("Demo")
+
+# Box
+box = Part.makeBox(40, 30, 20)
+
+# Hole
+cyl = Part.makeCylinder(8, 20, FreeCAD.Vector(20, 15, 0))
+result = box.cut(cyl)
+
+Part.show(result, "BoxWithHole")
+doc.recompute()
+</textarea>
+  <button id="run">Run</button>
+  <div id="error"></div>
+</div>
+<div id="viewer">
+  <canvas id="canvas"></canvas>
+</div>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { STLLoader } from 'three/addons/loaders/STLLoader.js';
+
+const canvas = document.getElementById('canvas');
+const btn = document.getElementById('run');
+const scriptEl = document.getElementById('script');
+const errorEl = document.getElementById('error');
+
+// Scene setup
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x1a1a2e);
+
+const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 10000);
+camera.position.set(60, 60, 60);
+
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+const controls = new OrbitControls(camera, canvas);
+controls.enableDamping = true;
+
+// Lighting
+scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+dirLight.position.set(50, 80, 60);
+scene.add(dirLight);
+
+// Grid
+scene.add(new THREE.GridHelper(200, 20, 0x333355, 0x222244));
+
+let currentMesh = null;
+const loader = new STLLoader();
+const material = new THREE.MeshStandardMaterial({ color: 0x5588cc, metalness: 0.3, roughness: 0.6 });
+
+function fitCamera(mesh) {
+  const box = new THREE.Box3().setFromObject(mesh);
+  const center = box.getCenter(new THREE.Vector3());
+  const size = box.getSize(new THREE.Vector3());
+  const maxDim = Math.max(size.x, size.y, size.z);
+  const dist = maxDim * 2;
+
+  controls.target.copy(center);
+  camera.position.set(center.x + dist, center.y + dist * 0.7, center.z + dist);
+  camera.updateProjectionMatrix();
+  controls.update();
+}
+
+function resize() {
+  const rect = canvas.parentElement.getBoundingClientRect();
+  renderer.setSize(rect.width, rect.height);
+  renderer.setPixelRatio(window.devicePixelRatio);
+  camera.aspect = rect.width / rect.height;
+  camera.updateProjectionMatrix();
+}
+
+window.addEventListener('resize', resize);
+resize();
+
+function animate() {
+  requestAnimationFrame(animate);
+  controls.update();
+  renderer.render(scene, camera);
+}
+animate();
+
+btn.addEventListener('click', async () => {
+  btn.disabled = true;
+  btn.textContent = 'Running...';
+  errorEl.textContent = '';
+
+  try {
+    const resp = await fetch('/run', { method: 'POST', body: scriptEl.value });
+    if (!resp.ok) {
+      errorEl.textContent = await resp.text();
+      return;
+    }
+    const buf = await resp.arrayBuffer();
+    const geometry = loader.parse(buf);
+    geometry.computeVertexNormals();
+
+    if (currentMesh) scene.remove(currentMesh);
+    currentMesh = new THREE.Mesh(geometry, material);
+    scene.add(currentMesh);
+    fitCamera(currentMesh);
+  } catch (e) {
+    errorEl.textContent = e.message;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Run';
+  }
+});
+</script>
+</body>
+</html>
