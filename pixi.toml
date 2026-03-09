@@ -152,6 +152,8 @@ pthreads-win32 = "*"
 
 [pypi-dependencies]
 freecad-stubs = "*"
+fastapi = ">=0.115"
+uvicorn = {version = ">=0.34", extras = ["standard"]}
 
 ## Qt 6 Configuration Presets
 [target.linux-64.tasks]
