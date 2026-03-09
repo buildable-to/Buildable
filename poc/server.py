@@ -1,16 +1,28 @@
-"""FreeCAD Web 3D Viewer — minimal PoC server."""
+"""FreeCAD Web 3D Viewer — minimal PoC server with AI chat."""
 
 import asyncio
+import base64
+import json
 import tempfile
+import uuid
 from pathlib import Path
 
 from fastapi import FastAPI, Request, Response
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, StreamingResponse
+
+from claude_chat import ClaudeChat
 
 app = FastAPI()
 
 FREECAD_CMD = Path(__file__).resolve().parent.parent / "build" / "debug" / "bin" / "FreeCADCmd"
 INDEX_HTML = Path(__file__).resolve().parent / "index.html"
+
+SEED_SOURCE = """\
+import FreeCAD
+import Part
+doc = FreeCAD.newDocument("Design")
+doc.recompute()
+"""
 
 EXPORT_TRAILER = """
 # --- auto-injected STL export trailer ---
@@ -30,6 +42,27 @@ if shapes:
 else:
     raise RuntimeError("No objects with Shape found in document")
 """
+
+# In-memory session store: session_id -> {tmpdir, chat, tempdir_obj}
+sessions: dict[str, dict] = {}
+
+
+def get_or_create_session(session_id: str | None) -> tuple[str, ClaudeChat]:
+    """Get existing session or create a new one. Returns (session_id, chat)."""
+    if session_id and session_id in sessions:
+        s = sessions[session_id]
+        return session_id, s["chat"]
+
+    # Create new session
+    sid = str(uuid.uuid4())
+    tmpdir_obj = tempfile.TemporaryDirectory(prefix="freecad_web_")
+    tmpdir = tmpdir_obj.name
+    source_path = Path(tmpdir) / "source.py"
+    source_path.write_text(SEED_SOURCE)
+
+    chat = ClaudeChat(tmpdir)
+    sessions[sid] = {"tmpdir": tmpdir, "chat": chat, "tempdir_obj": tmpdir_obj}
+    return sid, chat
 
 
 async def run_freecad_script(script: str) -> bytes:
@@ -80,6 +113,53 @@ async def run(request: Request):
     except RuntimeError as e:
         return Response(content=str(e), status_code=422, media_type="text/plain")
     return Response(content=stl_bytes, media_type="application/octet-stream")
+
+
+@app.post("/chat")
+async def chat(request: Request):
+    """Chat endpoint — runs Claude, executes source.py, returns SSE stream."""
+    body = await request.json()
+    message = body.get("message", "").strip()
+    session_id = body.get("session_id")
+
+    if not message:
+        return Response(content="Empty message", status_code=400)
+
+    sid, claude = get_or_create_session(session_id)
+
+    async def event_stream():
+        try:
+            # Run Claude chat in thread pool (it's blocking)
+            result = await asyncio.to_thread(claude.chat, message)
+
+            # Send response text
+            yield _sse({"type": "text", "content": result["response"], "session_id": sid})
+
+            # If source.py was edited, read it and execute
+            if result["source_edited"]:
+                source_path = Path(claude.project_dir) / "source.py"
+                script = source_path.read_text()
+                yield _sse({"type": "script", "content": script})
+
+                # Execute in FreeCADCmd
+                try:
+                    stl_bytes = await run_freecad_script(script)
+                    stl_b64 = base64.b64encode(stl_bytes).decode()
+                    yield _sse({"type": "stl", "content": stl_b64})
+                except RuntimeError as e:
+                    yield _sse({"type": "error", "content": str(e)})
+
+        except Exception as e:
+            yield _sse({"type": "error", "content": str(e)})
+
+        yield _sse({"type": "done"})
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
+def _sse(data: dict) -> str:
+    """Format a dict as an SSE event."""
+    return f"data: {json.dumps(data)}\n\n"
 
 
 if __name__ == "__main__":
