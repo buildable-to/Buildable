@@ -145,6 +145,10 @@ function loadSTL(arrayBuffer) {
   fitCamera(currentMesh);
 }
 
+function clearScene() {
+  if (currentMesh) { scene.remove(currentMesh); currentMesh = null; }
+}
+
 function resize() {
   const rect = canvas.parentElement.getBoundingClientRect();
   renderer.setSize(rect.width, rect.height);
@@ -244,6 +248,10 @@ async function sendChat() {
             break;
           }
 
+          case 'clear':
+            clearScene();
+            break;
+
           case 'error':
             setThinking(false);
             addMessage(event.content, 'error');
@@ -281,6 +289,7 @@ runBtn.addEventListener('click', async () => {
   runBtn.textContent = 'Running...';
   try {
     const resp = await fetch('/run', { method: 'POST', body: codeContent.textContent });
+    if (resp.status === 204) { clearScene(); return; }
     if (!resp.ok) {
       addMessage(await resp.text(), 'error');
       return;

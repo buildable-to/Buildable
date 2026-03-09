@@ -34,13 +34,11 @@ for obj in FreeCAD.ActiveDocument.Objects:
         shapes.append(obj.Shape)
 
 if shapes:
-    compound = Part.makeCompound(shapes)
     mesh = Mesh.Mesh()
     for s in shapes:
         mesh.addMesh(Mesh.Mesh(s.tessellate(0.1)))
     mesh.write("{stl_path}")
-else:
-    raise RuntimeError("No objects with Shape found in document")
+# No shapes → don't write STL; server treats missing file as empty scene
 """
 
 # In-memory session store: session_id -> {tmpdir, chat, tempdir_obj}
@@ -65,7 +63,7 @@ def get_or_create_session(session_id: str | None) -> tuple[str, ClaudeChat]:
     return sid, chat
 
 
-async def run_freecad_script(script: str) -> bytes:
+async def run_freecad_script(script: str) -> bytes | None:
     """Execute a Python script in FreeCADCmd and return the resulting STL."""
     with tempfile.TemporaryDirectory() as tmp:
         stl_path = Path(tmp) / "output.stl"
@@ -92,8 +90,8 @@ async def run_freecad_script(script: str) -> bytes:
             raise RuntimeError(f"FreeCADCmd failed (exit {proc.returncode}):\n{err}")
 
         if not stl_path.exists():
-            err = stderr.decode(errors="replace")
-            raise RuntimeError(f"No STL output produced.\nstderr: {err}")
+            # Script succeeded but produced no geometry — empty scene
+            return None
 
         return stl_path.read_bytes()
 
@@ -112,6 +110,8 @@ async def run(request: Request):
         stl_bytes = await run_freecad_script(script)
     except RuntimeError as e:
         return Response(content=str(e), status_code=422, media_type="text/plain")
+    if stl_bytes is None:
+        return Response(status_code=204)
     return Response(content=stl_bytes, media_type="application/octet-stream")
 
 
@@ -144,8 +144,11 @@ async def chat(request: Request):
                 # Execute in FreeCADCmd
                 try:
                     stl_bytes = await run_freecad_script(script)
-                    stl_b64 = base64.b64encode(stl_bytes).decode()
-                    yield _sse({"type": "stl", "content": stl_b64})
+                    if stl_bytes is None:
+                        yield _sse({"type": "clear"})
+                    else:
+                        stl_b64 = base64.b64encode(stl_bytes).decode()
+                        yield _sse({"type": "stl", "content": stl_b64})
                 except RuntimeError as e:
                     yield _sse({"type": "error", "content": str(e)})
 
